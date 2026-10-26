@@ -1,0 +1,27 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Install
+        shell: pwsh
+        run: ./scripts/setup.ps1
+      - name: Engine and UI tests
+        run: .venv/Scripts/python.exe scripts/test.py --report dist/tests.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: dist/tests.json

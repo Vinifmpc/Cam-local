@@ -1,0 +1,6 @@
+pyinstaller==6.22.3
+pywebview==6.2.1
+pythonnet==3.2.1
+clr-loader==0.3.1
+numpy==2.3.5
+pyclipr==0.1.8

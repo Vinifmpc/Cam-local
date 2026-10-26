@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@opencamlib/opencamlib": "2023.1.11"
+  },
+  "private": true
+}
