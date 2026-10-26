@@ -44,9 +44,12 @@ def main():
         source=ROOT/relative;target=destination/relative
         if not source.is_file():raise SystemExit('Fonte ausente: '+str(relative))
         if source.suffix.lower() in ('.exe','.nc','.stl','.node','.dll','.log'):raise SystemExit('Artefato inesperado: '+str(relative))
-        target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,target)
+        target.parent.mkdir(parents=True,exist_ok=True)
+        content=source.read_bytes()
+        if source.suffix.lower() not in ('.ico','.gz'):content=content.replace(b'\r\n',b'\n')
+        target.write_bytes(content)
         records.append({'path':relative.as_posix(),'bytes':target.stat().st_size,'sha256':hashlib.sha256(target.read_bytes()).hexdigest()})
-    agent=destination/'AGENTS.md';agent.write_text((ROOT/'docs/AGENTS_PUBLIC.md').read_text('utf8'),encoding='utf8')
+    agent=destination/'AGENTS.md';agent.write_bytes((ROOT/'docs/AGENTS_PUBLIC.md').read_text('utf8').encode('utf8'))
     records.append({'path':'AGENTS.md','bytes':agent.stat().st_size,'sha256':hashlib.sha256(agent.read_bytes()).hexdigest()})
     # Test strings such as C:/secret.stl exercise hostile ZIP input; actual local
     # user paths, credentials, job data and analysis outputs must never ship.
@@ -57,7 +60,7 @@ def main():
         for fragment in ('C:'+ '/Users/','C:'+ '\\Users\\','github_'+'pat_','gh'+'p_','-----BEGIN '+'PRIVATE KEY-----'):
             if fragment in content:raise SystemExit('Revise conteúdo local/segredo em '+record['path'])
     manifest={'format':1,'application':'CAM Local','license':'MIT (original code)','files':records}
-    marker.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf8')
+    marker.write_bytes(json.dumps(manifest,ensure_ascii=False,indent=2).encode('utf8'))
     archive=destination.parent/'CAM-Local-GitHub.zip'
     with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as bundle:
         for relative in [Path(row['path']) for row in records]+[Path(marker.name)]:

@@ -45,8 +45,8 @@
     },
     {
       "path": "docs/COMANDOS.md",
-      "bytes": 13624,
-      "sha256": "e085d0e082040c89d8615088d1fd189f51bb18d3eafb95fd4d88652740263834"
+      "bytes": 13405,
+      "sha256": "88fb7922042a695e96fda6cadf8569113192a9e68261992ff80542a737a62380"
     },
     {
       "path": "docs/RELEASE_NOTES.md",
@@ -80,13 +80,13 @@
     },
     {
       "path": "scripts/build.ps1",
-      "bytes": 725,
-      "sha256": "c6cd36e4d72ba8f81524d56ef3fdb6052bc1e7295581aac90d3070aa4d11612c"
+      "bytes": 716,
+      "sha256": "32b4147caf9124129943e4a441f92c33248f0e569ab6a8d0ecfc5d5278dc720c"
     },
     {
       "path": "scripts/cam-command.ps1",
-      "bytes": 2044,
-      "sha256": "8e4bcfebb6eef4f341eac07c37aa249821a08b6f6c4ef8e9cb5f0f21abd81e55"
+      "bytes": 2005,
+      "sha256": "cd5161e9cddd91419008977112cc89923a4b655d2fb9f91fa1529685125cbb81"
     },
     {
       "path": "scripts/check_native.py",
@@ -105,18 +105,18 @@
     },
     {
       "path": "scripts/prepare_github.py",
-      "bytes": 4960,
-      "sha256": "c49b9c6f49c304b822b9bc498961d954e5c326110b78e6cc01376b761675b792"
+      "bytes": 5095,
+      "sha256": "0833c8d1b1c9c76ae53da3487564c8f7abb89c35891be85adfbcc12b9dea9a37"
     },
     {
       "path": "scripts/run.ps1",
-      "bytes": 412,
-      "sha256": "57105d6f728d8eb7b02370fd80861eb54be43d16f7fc555cbcd120d2099490b9"
+      "bytes": 405,
+      "sha256": "5d5185adb43cb337eadea4c3e961b969e9ddbfdfba3988c309c42cc50d261b65"
     },
     {
       "path": "scripts/setup.ps1",
-      "bytes": 1521,
-      "sha256": "b8a91370455b50aeedabc8d440ccb7a285b148af1d1d1651c10fb1d55cf90d67"
+      "bytes": 1497,
+      "sha256": "97aa4d0fd4083695f7f7181cd0bfab243f43d16269f8a463af93cab8408d00da"
     },
     {
       "path": "scripts/test.py",
@@ -130,8 +130,8 @@
     },
     {
       "path": "third_party/SOURCES.json",
-      "bytes": 276,
-      "sha256": "49b07a1db7a44abba29876f242a7386785702e6dd2d99f4a8b338011d91a6e69"
+      "bytes": 269,
+      "sha256": "587289f4764dbc7dd362411427c788116d0592d78ddd843640d6e4b2e3cda9ec"
     },
     {
       "path": "THIRD_PARTY_NOTICES.md",
@@ -195,8 +195,8 @@
     },
     {
       "path": "work/cam-ui/licenses/pyclipr-LICENSE",
-      "bytes": 1361,
-      "sha256": "beb8e42e9d6b4284e03304d05a81a0755200a965fc8d0a5e0aea1e84cf805d6e"
+      "bytes": 1338,
+      "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
     },
     {
       "path": "work/cam-ui/licenses/Three-LICENSE.txt",
@@ -225,8 +225,8 @@
     },
     {
       "path": "work/cam-ui/static/app.js",
-      "bytes": 87311,
-      "sha256": "fea7f8bd7c8f4325f496dc4ebe26fe4acc8c23bf38f79a99a473751755c0cb26"
+      "bytes": 86367,
+      "sha256": "21c3d8e59ddb253a183afea352c77a6c6e892fc3c8586e90a17a323c72959be9"
     },
     {
       "path": "work/cam-ui/static/automatic_regions.js",
@@ -255,8 +255,8 @@
     },
     {
       "path": "work/cam-ui/static/index.html",
-      "bytes": 26029,
-      "sha256": "6131f5db10ea82b31cdb2d3f6b41792cda28fc74cef1927450f3340fc3d3eaa6"
+      "bytes": 25962,
+      "sha256": "6bd0606b1818bbb0f08a3dd5bcf2c889fc4069fbe66aaba7587a2fdff37ee1fc"
     },
     {
       "path": "work/cam-ui/static/operation_list.js",
@@ -310,8 +310,8 @@
     },
     {
       "path": "work/cam-ui/static/style.css",
-      "bytes": 18932,
-      "sha256": "514c21f16947bf53175886da749bc48ac4f763d87026056d2162d2dd0cda8811"
+      "bytes": 18854,
+      "sha256": "c596126c195df2112d9942226ad70793d8671fcea39140ef3427e76c39e4d76a"
     },
     {
       "path": "work/cam-ui/static/workspace.css",
@@ -435,13 +435,13 @@
     },
     {
       "path": "work/geometry-runtime/package-lock.json",
-      "bytes": 2657,
-      "sha256": "51db14ecfa727fc8fbfc924fbf71da0fd793c9f7a1ea6d18698bb4c568cd74de"
+      "bytes": 2586,
+      "sha256": "54ff60b6d01fdc33faeb0da9513d8e8acb5184429f0bdc92951b85accf9d5965"
     },
     {
       "path": "work/geometry-runtime/package.json",
-      "bytes": 95,
-      "sha256": "668d6706fb7481638bc8816376993b0d1decf0eed48d416496d8569ad966a734"
+      "bytes": 89,
+      "sha256": "0188e9945d28e004f81311d3924a85e599582dd1d266baa2ce2e4e476147a5b9"
     },
     {
       "path": "work/roughing/audit_gcode.py",
@@ -700,8 +700,8 @@
     },
     {
       "path": "AGENTS.md",
-      "bytes": 1063,
-      "sha256": "d5c5f36fa1728a470318a591e847f7eb3c91373c4f310f3cba2acad0b747e3ac"
+      "bytes": 1052,
+      "sha256": "acb80731a85fc74286fcf13911041df764924a5693fa528c89e600511d607f0a"
     }
   ]
 }
