@@ -19,6 +19,11 @@
       "sha256": "33d4a2a4d9175a65b6c5a9d17ccd7bdc2a9d41ee844df08f42c493f2f0fd151b"
     },
     {
+      "path": ".github/workflows/release-windows.yml",
+      "bytes": 2778,
+      "sha256": "a8f62305a1a5c4b1045bec05447a2f4ffad2463a78fc84a57acc37a2ef04db59"
+    },
+    {
       "path": ".gitignore",
       "bytes": 1861,
       "sha256": "5409ffd894aa04674cd318a49c71fc65fce5ab3414235d7a5f8baa157e9612d1"
@@ -44,9 +49,14 @@
       "sha256": "e085d0e082040c89d8615088d1fd189f51bb18d3eafb95fd4d88652740263834"
     },
     {
+      "path": "docs/RELEASE_NOTES.md",
+      "bytes": 956,
+      "sha256": "0aadbee20db681df2b65b1e6f7f05c16aa06d0c641fde6cc919d53649b06bc2b"
+    },
+    {
       "path": "docs/UPLOAD.md",
-      "bytes": 1578,
-      "sha256": "8397e27fda4b38bf9519d4df167aa60ab4d85b4ab8981429f02546f296c9402d"
+      "bytes": 2017,
+      "sha256": "6b4e691704318f6b4bbe88ab34fe3ed35035425638dc8e4986bba36af5435736"
     },
     {
       "path": "LICENSE",

@@ -27,3 +27,7 @@ O `.gitignore` exclui `node_modules`, ambientes, builds, modelos STL, NCs, logs 
 ## Executável
 
 Depois de publicar o código, crie uma Release no GitHub e anexe `CAM-Local-Windows-publico.zip`. O workflow de build também permite gerar um ZIP no GitHub Actions pelo botão **Run workflow**. Dados pessoais, projetos locais e resultados da peça usada no desenvolvimento não fazem parte dessa distribuição pública.
+
+## Publicação automática de uma versão
+
+O workflow **Publish Windows release** testa, gera o pacote e publica uma Release com o ZIP e a soma SHA256. Execute-o por **Run workflow**, informando uma versão como `v0.1.1`, ou envie à `main` um commit cujo título seja exatamente `release: v0.1.1`. Commits normais executam os testes, sem publicar uma versão. Releases existentes não são sobrescritas; use um novo número de versão.
