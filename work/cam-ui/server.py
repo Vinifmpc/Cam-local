@@ -47,7 +47,7 @@ class App:
         self.pool=ThreadPoolExecutor(max_workers=1);self.lock=threading.Lock();self.active=None
         self.job_started={}
         self.cancel_signals={};self.stopping=False
-        self.commands=CommandMailbox();self.on_close=None
+        self.commands=CommandMailbox();self.on_close=None;self.on_show=None
         self.calculation_timeout_s=float(calculation_timeout_s if calculation_timeout_s is not None else os.environ.get('CAM_CALC_TIMEOUT_S','900'))
         if not math.isfinite(self.calculation_timeout_s) or self.calculation_timeout_s<=0:raise ValueError('Prazo de cálculo inválido')
 
@@ -162,6 +162,7 @@ class App:
             'entries':len(motion['entries']),'cutting_edges':sum((result.get(name) or {}).get('cutting_edges',0) for name in ('roughing','cutout','drill')),
             'operations':{name:{'contours':len(result[name].get('contours',[])),
                 'contours_selection':result[name].get('contours_selection'),
+                'selected_internal_indices':result[name].get('selected_internal_indices',[]),
                 'internal_contours_total':result[name].get('internal_contours_total',0),
                 'skipped_internal_contours':result[name].get('skipped_internal_contours',0),
                 'rest_material':result[name].get('rest_material'),
@@ -408,6 +409,9 @@ def handler_for(app):
                     if options.machining_mode=='smart':app.smart_plan(record)
                     elif options.roughing_enabled and settings.stock_top_mm-settings.bottom_mm>tool.cutting_length_mm:raise ValueError('Profundidade maior que o comprimento de corte da ferramenta')
                     return self.send(200,{'tool':tool.as_dict(),'settings':asdict(settings),'operations':asdict(options),'placement':placement,'ui':ui})
+                if url.path=='/api/window/show':
+                    if app.on_show:threading.Thread(target=app.on_show,daemon=True).start()
+                    return self.send(200,{'shown':bool(app.on_show)})
                 if url.path=='/api/shutdown':
                     self.send(200,{'stopping':True})
                     if app.on_close:threading.Thread(target=app.on_close,daemon=True).start()

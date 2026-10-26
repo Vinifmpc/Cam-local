@@ -25,8 +25,8 @@
     },
     {
       "path": ".gitignore",
-      "bytes": 1861,
-      "sha256": "5409ffd894aa04674cd318a49c71fc65fce5ab3414235d7a5f8baa157e9612d1"
+      "bytes": 1897,
+      "sha256": "520a31849f24e8e2e8d69612c640b5c5bd3b9df05de0b8832dd2e2040631ecfa"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -40,18 +40,18 @@
     },
     {
       "path": "docs/ARQUITETURA.md",
-      "bytes": 2197,
-      "sha256": "2a6a907e7ffeae63d95415d6e914502ecf9d1396c7e8266de024ff657b218038"
+      "bytes": 3991,
+      "sha256": "41c28f52f699770911d6b962225377c49fe1fe98363baba3f2e98bd8537904da"
     },
     {
       "path": "docs/COMANDOS.md",
-      "bytes": 13405,
-      "sha256": "88fb7922042a695e96fda6cadf8569113192a9e68261992ff80542a737a62380"
+      "bytes": 15303,
+      "sha256": "d4ea17c30ac7d2ba9df946715862ee23020e75b3d8668bf8c81c0d1f89a98c17"
     },
     {
       "path": "docs/RELEASE_NOTES.md",
-      "bytes": 956,
-      "sha256": "0aadbee20db681df2b65b1e6f7f05c16aa06d0c641fde6cc919d53649b06bc2b"
+      "bytes": 1400,
+      "sha256": "556437c589230e182f96d468558af426f8c4c33d40dee6fd3f8435b29468efee"
     },
     {
       "path": "docs/UPLOAD.md",
@@ -65,8 +65,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 3010,
-      "sha256": "1b40e39f6a24cc7b51618c7a0b1d3e0155adbed9bd780a7e7347c0320af34650"
+      "bytes": 3332,
+      "sha256": "7725c77354800a7a75c4d5dc3712992181e127a1a894c5e7d251887bd933d054"
     },
     {
       "path": "requirements-dev.txt",
@@ -90,8 +90,8 @@
     },
     {
       "path": "scripts/check_native.py",
-      "bytes": 4913,
-      "sha256": "d5e6a25e3840e6b6597b091b27335a046aed8a4135c30ba715ee9b24cb1063b8"
+      "bytes": 5571,
+      "sha256": "3739368e42a95b1a5f67c7b2b5f2392b2b66ec24f36bacb791efeb2d9673bb80"
     },
     {
       "path": "scripts/collect_licenses.py",
@@ -100,13 +100,13 @@
     },
     {
       "path": "scripts/package_binary.py",
-      "bytes": 3025,
-      "sha256": "f6bfaaccbd37226bc1321fc259fefb4cc44edb73ee3473196e90532048eb8679"
+      "bytes": 3159,
+      "sha256": "736f87b8a10161a9840b0896bef1411ba70466565f8dba02b856812192c73b39"
     },
     {
       "path": "scripts/prepare_github.py",
-      "bytes": 5095,
-      "sha256": "0833c8d1b1c9c76ae53da3487564c8f7abb89c35891be85adfbcc12b9dea9a37"
+      "bytes": 5112,
+      "sha256": "c17fd4dc0544d529c6c4809d48d66a30024ef466570a1ba6bdb8d130e8048185"
     },
     {
       "path": "scripts/run.ps1",
@@ -140,8 +140,8 @@
     },
     {
       "path": "work/cam-ui/calculation_worker.py",
-      "bytes": 7427,
-      "sha256": "7610cf5fbb46fa8cd3fe3db105c4d61e285d66cf021e10c8501512bfa8265c8c"
+      "bytes": 7440,
+      "sha256": "5ed88ee9da12a58b5c56ba1eec844147475af26a6dd39c57e7449b25f491d3b2"
     },
     {
       "path": "work/cam-ui/CAMLocal.spec",
@@ -150,13 +150,13 @@
     },
     {
       "path": "work/cam-ui/command_client.py",
-      "bytes": 15434,
-      "sha256": "1b92b571ff64db3a860906d579c4c8d3b66ab9673f3db809e4f7d71845fdbadd"
+      "bytes": 16086,
+      "sha256": "e01ec71c413131923a0873f927b046d7be875d6866032ec3ea804a57b3c12d2d"
     },
     {
       "path": "work/cam-ui/command_control.py",
-      "bytes": 5204,
-      "sha256": "a31e869e7e37c00247dc9929ae7af1e38d2c909ba8787fe50741c9277c86aa80"
+      "bytes": 5265,
+      "sha256": "4307722fa0fdfc80ce73634018ec94b58bd06ccab2366769a3f3ed0a0c31388e"
     },
     {
       "path": "work/cam-ui/desktop.ico",
@@ -165,8 +165,8 @@
     },
     {
       "path": "work/cam-ui/desktop_app.py",
-      "bytes": 13193,
-      "sha256": "b75cf26469dd61a172b9f9fa2136ca9155a89b4a5d28dc208bf06157778cfde5"
+      "bytes": 13625,
+      "sha256": "bd2cba730067275bd23e9029a70701a612e254c2df96cc77e83de18280d50531"
     },
     {
       "path": "work/cam-ui/licenses/GPL-3.0.txt",
@@ -220,18 +220,18 @@
     },
     {
       "path": "work/cam-ui/server.py",
-      "bytes": 28189,
-      "sha256": "3b9d8d1cd0fa8c479df48bc362c71dcef802f53432876e3c6efbbd2a529fe4af"
+      "bytes": 28512,
+      "sha256": "568eb16eba2f7d8debac27f0413537c1ef6e7e8f53017f210891fb3468c3aae5"
     },
     {
       "path": "work/cam-ui/static/app.js",
-      "bytes": 86367,
-      "sha256": "21c3d8e59ddb253a183afea352c77a6c6e892fc3c8586e90a17a323c72959be9"
+      "bytes": 94430,
+      "sha256": "a71cb03f8f12d6bfb6e59faf1426b01e6606b2001ba4211b7ff7fe850db8d304"
     },
     {
       "path": "work/cam-ui/static/automatic_regions.js",
-      "bytes": 3174,
-      "sha256": "b38367d651fc52a473140798b80573814a58e07e983410cc34f336714cfbf1e8"
+      "bytes": 3516,
+      "sha256": "ec58c3ab1da00e8f85076a7d7734eab5aecf592076fd711b400a48c86e517907"
     },
     {
       "path": "work/cam-ui/static/command_bridge.js",
@@ -250,18 +250,28 @@
     },
     {
       "path": "work/cam-ui/static/form_state.js",
-      "bytes": 9483,
-      "sha256": "2e3b100b42da389daed288745eebdb02d3617367aa055c8dffdfc9d9e6c880c0"
+      "bytes": 9705,
+      "sha256": "9e60fe11e078d6f5f3b48a6a5aeaa723bc95570e3bac890414b8fb2a7e4a0473"
     },
     {
       "path": "work/cam-ui/static/index.html",
-      "bytes": 25962,
-      "sha256": "6bd0606b1818bbb0f08a3dd5bcf2c889fc4069fbe66aaba7587a2fdff37ee1fc"
+      "bytes": 33762,
+      "sha256": "753cba7cb22fb1eea0ce022358dd1c3e91a6e0f7a0f3a7069eb3aa910d06ee0e"
     },
     {
       "path": "work/cam-ui/static/operation_list.js",
       "bytes": 8177,
       "sha256": "afcc119b1a172c0f5a05d3cea012faa5733c9be7f36b4223f20c518a7eb62995"
+    },
+    {
+      "path": "work/cam-ui/static/placement.css",
+      "bytes": 6778,
+      "sha256": "db0065cc79afc0b3b8cacacfc9c67df69c788330649530df9bced8ac7442072d"
+    },
+    {
+      "path": "work/cam-ui/static/placement_controls.js",
+      "bytes": 4108,
+      "sha256": "28d61f8d35bd8d661eb44e80d035a9af577d44729077d9a4acc70e778e18b8f7"
     },
     {
       "path": "work/cam-ui/static/playback.js",
@@ -280,8 +290,8 @@
     },
     {
       "path": "work/cam-ui/static/smart_mode.js",
-      "bytes": 4785,
-      "sha256": "d997cd50188784431938d0b051b1def995a550847ea0d54909c03ad7cdf9861a"
+      "bytes": 5580,
+      "sha256": "15015ba6ff1f9d9e5a820170eb9f0c3d2a63042ace06539563fcb297f4f044d8"
     },
     {
       "path": "work/cam-ui/static/solid_worker.js",
@@ -330,13 +340,13 @@
     },
     {
       "path": "work/cam-ui/test_calculation_worker.py",
-      "bytes": 2863,
-      "sha256": "b227b2bd37615ec4b8c6d0954f27786fab2022e42249dd6a4a7187914c05332a"
+      "bytes": 3045,
+      "sha256": "feb2252c9578d972842a5c5c4a7668352045d1c12eb871ac88bde411a0354c95"
     },
     {
       "path": "work/cam-ui/test_command_control.py",
-      "bytes": 5409,
-      "sha256": "02e605ea4ffdb0df870b52796ed4de2a356fab088750ad1175b3a2644f5e213f"
+      "bytes": 5715,
+      "sha256": "c4adad1227bff5cacf7e16379d1994a40b1dfa89d5edcf04af57186727a8582f"
     },
     {
       "path": "work/cam-ui/test_cutout_feedback.mjs",
@@ -367,6 +377,11 @@
       "path": "work/cam-ui/test_operation_list.mjs",
       "bytes": 9718,
       "sha256": "136fe45b284d1acfcff9f923b547fc6f6f9271e309afb46bd90b27667f9a77a6"
+    },
+    {
+      "path": "work/cam-ui/test_placement_controls.mjs",
+      "bytes": 4202,
+      "sha256": "26b001cce36e2f3ad9ed2d6635f4fc33873827705a652da3aedaf65762580ca7"
     },
     {
       "path": "work/cam-ui/test_playback.mjs",
@@ -410,8 +425,8 @@
     },
     {
       "path": "work/cam-ui/test_smart_mode.mjs",
-      "bytes": 14702,
-      "sha256": "752cd401630c48caeeb683f554f14b7652afd28a5cf8d49394268f0ffd71200d"
+      "bytes": 15320,
+      "sha256": "88b72549997c8da1450c0731a2787f225c4139a55fd5e2e8395c64f85e85ca36"
     },
     {
       "path": "work/cam-ui/test_solid.mjs",
@@ -455,8 +470,8 @@
     },
     {
       "path": "work/roughing/cam_project.py",
-      "bytes": 20036,
-      "sha256": "1583c6cbc7a73e1dc1d888dca9b906adfe48f92425ac93a04be2754224489908"
+      "bytes": 20322,
+      "sha256": "c4afc81ea767e3a330fa886dd83a043ba7ced6092eb476022089a985a0a73ede"
     },
     {
       "path": "work/roughing/cam_setup.py",
@@ -465,8 +480,8 @@
     },
     {
       "path": "work/roughing/cam_tools.py",
-      "bytes": 5456,
-      "sha256": "f0083430d8ea869135a7e3d9c1cabd834533c3634dcae53e23215b59dfeae315"
+      "bytes": 5564,
+      "sha256": "6486bca7a4960954a53bf2679cb0e99bb40642dada6a834018f76bbd4930c414"
     },
     {
       "path": "work/roughing/camadas_desbaste.py",
@@ -475,13 +490,13 @@
     },
     {
       "path": "work/roughing/cleared_area.py",
-      "bytes": 7378,
-      "sha256": "22831d3e65f6dd639628fbd355b37b8e3fd5cf0aae9c8ab610846cf4d046bc99"
+      "bytes": 10779,
+      "sha256": "df6f7f4643070ddb8ff695c7a71990399253c090220aacbc037c6a05b8cce0ff"
     },
     {
       "path": "work/roughing/cutout.py",
-      "bytes": 4759,
-      "sha256": "30d7ed80d49bc35c22e2720428ff03c805b41c077aae77ccc39549d592f5897c"
+      "bytes": 6057,
+      "sha256": "8a9142d663226c01d2a894beba5a8ff79484d4be9b00c2783a36387c753d1a2f"
     },
     {
       "path": "work/roughing/cutout_rest.py",
@@ -500,8 +515,13 @@
     },
     {
       "path": "work/roughing/grbl_post.py",
-      "bytes": 11721,
-      "sha256": "3de8e557e72cff0b65c16ec6b8ab338b3e6cebd63c4696303785f934d9f40223"
+      "bytes": 11884,
+      "sha256": "253d6a556e3c646aa869e04ddb40a4cdaaf6f977e6b72d2a42ca9ad764cc48ab"
+    },
+    {
+      "path": "work/roughing/internal_cutouts.py",
+      "bytes": 4249,
+      "sha256": "ce9bcdec048bf91d9bd2e01d4f1cfe260550b5c713e23cdadff912abea8a66b2"
     },
     {
       "path": "work/roughing/layer_regions.py",
@@ -520,8 +540,8 @@
     },
     {
       "path": "work/roughing/motion_planner.py",
-      "bytes": 32870,
-      "sha256": "6f8d747b76320f6d0f3b4edde70c2e3ff13a7a87fb72f6b97d7eac5a8c9831bb"
+      "bytes": 33429,
+      "sha256": "2d8a1fc88fb46e7ad0f73380d4d395591d223b99c97fb19caa995d183e09e08d"
     },
     {
       "path": "work/roughing/ocl_contact_bridge.cjs",
@@ -530,8 +550,8 @@
     },
     {
       "path": "work/roughing/parallel_workers.py",
-      "bytes": 989,
-      "sha256": "33a5d7d1de17c4c9dce5395bb57c504ac3f917d533b9d0c20d55ac81266e14d6"
+      "bytes": 1262,
+      "sha256": "fde7fa9945f7b905487ecae06542849ecf9946793f1b0288be915b1334ca6415"
     },
     {
       "path": "work/roughing/planar_roughing.py",
@@ -560,8 +580,8 @@
     },
     {
       "path": "work/roughing/smart_planner.py",
-      "bytes": 23546,
-      "sha256": "419c2e2d224a640e6dca1b9b23a8d9be539dcc2d10fa5cf81af6dc587544e7ac"
+      "bytes": 25246,
+      "sha256": "edba0895f84435ace610a796854a9266c0bdea4a19a4241f432506314100ac56"
     },
     {
       "path": "work/roughing/stl_roughing.py",
@@ -585,8 +605,8 @@
     },
     {
       "path": "work/roughing/test_clearance_optimization.py",
-      "bytes": 8047,
-      "sha256": "e04543865afb9ca0d7e43fb88f888adc0aea6e406596a503fb5aa5be48f5c50b"
+      "bytes": 9279,
+      "sha256": "ee2593e06b6fbe9ebef18ccf1a22c8c2ad668a8856d8bbc2508c045da00fa47c"
     },
     {
       "path": "work/roughing/test_cutout.py",
@@ -629,6 +649,11 @@
       "sha256": "f2ec1b1a2178cb1439789f9d606547416e754195dbfda655c1b09b95bd97a0fe"
     },
     {
+      "path": "work/roughing/test_internal_cutouts.py",
+      "bytes": 8025,
+      "sha256": "6e2bd5fc6717348c1455051f62ec86a73c0234985c02c43491cf3eb6db75ed53"
+    },
+    {
       "path": "work/roughing/test_layer_roughing.py",
       "bytes": 8332,
       "sha256": "0cc097562cef816ab0525fd215f993b5b58cb9a15f967b76807680569f5ba04c"
@@ -640,8 +665,8 @@
     },
     {
       "path": "work/roughing/test_parallel_geometry.py",
-      "bytes": 3991,
-      "sha256": "2e3630dc0e416cda12f7302750632b35033c1fe85cbfb36cafa396ffd3e1e978"
+      "bytes": 4214,
+      "sha256": "4ae9fa00b9562986a41180c80fb8249daf15b05b66468d443538b0c049b3f1d5"
     },
     {
       "path": "work/roughing/test_planar_roughing.py",
@@ -685,8 +710,8 @@
     },
     {
       "path": "work/roughing/track_index.py",
-      "bytes": 1998,
-      "sha256": "d94b5bc1f20752a8dad410b1f3d8b5bdc2877fc63ffb706915097b3ab4ed4ea3"
+      "bytes": 2146,
+      "sha256": "8431debd13c1cc5ecabd0b11cceb450057b7331d401600a254a1d8e8a4496c55"
     },
     {
       "path": "work/ui-runtime/package-lock.json",

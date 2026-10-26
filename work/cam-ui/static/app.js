@@ -12,6 +12,7 @@ import {createRegionPicker} from './region_picker.js';
 import {getCutoutRecovery} from './cutout_feedback.js';
 import {effectiveMachiningOptions,validateSmartOperationPatch,smartPlanText,smartEntryHint,smartPolicyText} from './smart_mode.js';
 import {createAutomaticRegionOverlay,smartPlanForState} from './automatic_regions.js';
+import {placementAction,placementOrigin,samePlacement} from './placement_controls.js';
 const $=id=>document.getElementById(id),fmt=(v,d=2)=>Number(v).toLocaleString('pt-BR',{maximumFractionDigits:d});
 const flip=[[1,0,0],[0,-1,0],[0,0,-1]];
 const identity=[[1,0,0],[0,1,0],[0,0,1]];
@@ -25,6 +26,7 @@ let regionPicker=null,cutoutRecovery=null,cutoutRecoveryApplying=false;
 let depthColoring=true;
 let smartPlanPreview=null,smartPlanPending=false,manualOperationState=null,manualCutoutPreferences=null;
 let automaticRegionsSource=null,automaticRegionsZ=null;
+let placementPanelTab=null,placementUiBusy=false,placementUndo=null;
 try{depthColoring=localStorage.getItem('cam-depth-colors')!=='false';}catch{}
 let stockGeneration=0,stockBusy=false,stockReady=false,stockWanted=0,stockApplied=-1,stockLastSent=0,toastTimer;
 let stockSampleSnapshot=null;
@@ -158,6 +160,12 @@ const hemi=new THREE.HemisphereLight(0xffffff,0x728399,2.5);hemi.position.set(0,
 const light=new THREE.DirectionalLight(0xffffff,3);light.position.set(-80,-100,180);scene.add(light);
 const modelGroup=new THREE.Group(),pathGroup=new THREE.Group(),rapidGroup=new THREE.Group(),regionGroup=new THREE.Group(),automaticRegionGroup=new THREE.Group(),toolGroup=new THREE.Group();
 scene.add(modelGroup,pathGroup,rapidGroup,regionGroup,automaticRegionGroup,toolGroup);
+const placementGizmo=new THREE.AxesHelper(1);
+placementGizmo.setColors(0xbd6470,0x3b927e,0x4d82c1);
+placementGizmo.material.depthTest=false;placementGizmo.material.depthWrite=false;placementGizmo.renderOrder=1000;placementGizmo.visible=false;
+const placementBox=new THREE.Box3Helper(new THREE.Box3(),0x80aacb);
+placementBox.material.transparent=true;placementBox.material.opacity=.55;placementBox.material.depthTest=false;placementBox.visible=false;
+scene.add(placementGizmo,placementBox);
 let grid=null,stockMesh=null,stockWire=null,span=100;
 function resize(){const r=$('canvasHost').getBoundingClientRect();renderer.setSize(r.width,r.height,false);const a=r.width/r.height;camera.left=-span*a/2;camera.right=span*a/2;camera.top=span/2;camera.bottom=-span/2;camera.updateProjectionMatrix();}
 new ResizeObserver(resize).observe($('canvasHost'));
@@ -293,7 +301,7 @@ function updateHints(){
  try{$('cutHint').textContent=$('roughEnabled').checked?`Z final: ${fmt(roughBottom(),3)} mm · Stepover: ${fmt(number('stepover')/100*tool.diameter_mm,3)} mm entre passadas.`:'Desbaste desativado.';}catch{$('cutHint').textContent='Complete os parâmetros do desbaste.';}
  try{$('cutoutHint').textContent=$('cutoutEnabled').checked?`Z final: ${fmt(cutoutBottom(),3)} mm · ${smart?'descida limitada também pelo Stepdown do Rough.':Math.ceil(number('cutoutDepth')/number('cutoutStepdown'))+' camadas por contorno.'}`:'Cutout desativado.';}catch{$('cutoutHint').textContent='Complete os parâmetros do cutout.';}
  try{$('drillHint').textContent=$('drillEnabled').checked?`Z limite: ${fmt(drillBottom(),3)} mm · fresa Ø ${fmt(tool.diameter_mm,3)} mm · corte ${fmt(tool.cutting_length_mm)} mm.`:'Drill desativado. Você pode conferir os furos antes de ativar.';}catch{$('drillHint').textContent='Complete os parâmetros do Drill.';}
- $('cutoutContourHint').textContent=smart?'Inteligente: o Cutout corta o contorno externo. O Rough segue as formas 3D, bolsões e rebaixos, inclusive abertos à borda; Drill trata os furos compatíveis quando ativo.':$('cutoutContours').value==='external'?'Somente o contorno externo: furos internos ficam fora do Cutout. Para recortá-los, escolha Internos + externo e uma fresa que caiba.':'Recorta os internos antes do externo. Se a fresa não couber em um interno, ajuste a ferramenta ou selecione somente o externo.';
+  $('cutoutContourHint').textContent=smart?'Inteligente: compara bolsões e recortes internos passantes. Miolos vantajosos são recortados antes do exterior; o Rough usina os demais detalhes. Confira a seleção no plano.':$('cutoutContours').value==='external'?'Somente o contorno externo: furos internos ficam fora do Cutout. Para recortá-los, escolha Internos + externo e uma fresa que caiba.':'Recorta os internos antes do externo. Se a fresa não couber em um interno, ajuste a ferramenta ou selecione somente o externo.';
  const canReuse=priorRoughingAvailable($('roughEnabled').checked,$('cutoutEnabled').checked,$('operationOrder').value,operationList.getState().order,$('drillEnabled').checked);
  $('cutoutReuseHint').textContent=smart?smartPolicyText(currentSmartPlan()).reuse:!canReuse?'Disponível quando Rough é a operação ativa imediatamente anterior ao Cutout. Na configuração atual, o recorte usa suas próprias camadas.':$('cutoutUsePriorRoughing').checked?'O Cutout aproveita áreas já removidas pelo Rough. Trechos ainda com material mantêm as camadas de corte.':'O Cutout usa suas próprias camadas, mesmo após o Rough.';
  renderSmartPlan();
@@ -304,6 +312,8 @@ function readOperations({strict=true}={}){
  return readOperationValues(values,operations,tool,strict?number('stockTop'):numericValue($('stockTop').value,'Topo do bruto',{required:false,fallback:settings.stock_top_mm??0}),{strict});
 }
 function updateOperationControls(){
+ const contourOption=[...($('cutoutContours').options||[])].find(option=>option.value==='external');
+ if(contourOption)contourOption.textContent=smartModeEnabled()?'Automático · internos vantajosos + externo':'Soltar a peça · somente externo';
  const smart=smartModeEnabled();
  for(const id of ['bottom','stepdown','stepover','roughFeed','roughingOrder','strategy','angle','sampling','radial','axial','cleanup'])$(id).disabled=!$('roughEnabled').checked;
  for(const id of ['cutoutDepth','cutoutStepdown','cutoutFeed','cutoutDirection','cutoutContours'])$(id).disabled=!$('cutoutEnabled').checked;
@@ -469,6 +479,7 @@ function updateWorkspaceAvailability(){
  const ready=!!data;
  document.body.classList.toggle('workspace-empty',!ready);
  $('emptyScene').hidden=ready;
+ $('placementDock').hidden=!ready;
  $('saveProject').disabled=!ready||busy||exportBusy;
  $('calculate').disabled=!ready||busy;
  for(const id of ['applyPlacement','inspectDrill','resetStock','stockMode'])$(id).disabled=!ready;
@@ -484,7 +495,7 @@ function adopt(sceneData){
  fillFields();displayToolSelect();setModel(data.triangles);renderRegions();regionList();setMotion(data.motion,data.project_id);
  $('sceneTag').textContent=sceneData.isDemo?'EXEMPLO · PLACA COM BOLSÃO':sceneData.approximate_regions?'REGIÕES APROXIMADAS':'PROJETO LOCAL';$('notice').textContent=sceneData.approximate_regions?'Regiões aproximadas · confira seus limites':'Motor experimental · sem conexão com máquina';
  $('planState').textContent=motion?'Percurso validado pelo motor':'Calcular percurso';$('planState').className='pill';$('calcStatus').textContent=motion?'Percurso carregado pronto para reprodução.':'Confira os parâmetros e calcule os percursos.';$('loadingScene').hidden=true;
- updateWorkspaceAvailability();
+ updateWorkspaceAvailability();syncPlacementUi();
 }
 function request(){if(!data)throw Error('Abra um STL primeiro.');settings=readSettings();operations=readOperations();return {asset:data.asset,placement,tool,settings,operations,notes:data.notes||'Projeto preparado pela interface local.',ui:{windows,stock:readStockSettings(),approximate_regions:!!data.approximate_regions}};}
 function sceneForNewMesh(inspected,currentSettings,currentOperations){
@@ -508,14 +519,102 @@ $('stlFile').onchange=async()=>{
   adopt(sceneForNewMesh(sceneData,currentSettings,currentOperations));toast('STL aberto. Avanços e ajustes preservados; profundidades e área permitida ajustadas ao bruto do novo modelo.');
  }catch(e){toast(e.message,true);}finally{$('stlFile').value='';}
 };
-$('applyPlacement').onclick=async()=>{
- if(!data)return;try{
-  const currentSettings=readSettings({strict:false}),currentOperations=readOperations({strict:false});
-  const custom=$('face').value==='custom';const p={units:$('units').value,rotation:custom?placement.rotation:($('face').value==='flip'?flip:identity),xy_origin:$('xyOrigin').value,z_origin:$('zOrigin').value,translation_mm:custom&&$('xyOrigin').value==='keep'&&$('zOrigin').value==='keep'?placement.translation_mm:[0,0,0]};
-  const inspected=await api('/api/inspect',{asset:data.asset,placement:p});
-  adopt(sceneForNewMesh(inspected,currentSettings,currentOperations));toast('Posição aplicada. Avanços e ajustes preservados; profundidades ajustadas e regiões limpas.');
- }catch(e){toast(e.message,true);}
+function placementUiState(detail=false){
+ const result={panel:placementPanelTab,enabled:!!data&&!busy&&!exportBusy&&!placementUiBusy,
+  undo_available:!!placementUndo&&placementUndo.revision===revision,origin:placementOrigin(data?.mesh.bounds_mm)};
+ if(detail){
+  const frame=$('viewport').getBoundingClientRect(),dock=$('placementDock').getBoundingClientRect();
+  result.layout={in_viewport:!!data&&dock.left>=frame.left&&dock.right<=frame.right&&dock.top>=frame.top&&dock.bottom<=frame.bottom,
+   panel_scrolls:$('placementPanel').scrollHeight>$('placementPanel').clientHeight};
+ }
+ return result;
+}
+function syncPlacementUi(){
+ const state=placementUiState(),open=!!data&&!!placementPanelTab;
+ $('placementDock').hidden=!data;$('placementPanel').hidden=!open;
+ $('placementDock').setAttribute('aria-busy',String(placementUiBusy));
+ $('calculate').disabled=!data||busy||placementUiBusy;
+ $('saveProject').disabled=!data||busy||exportBusy||placementUiBusy;
+ for(const button of $('placementDock').querySelectorAll('button'))button.disabled=!state.enabled;
+ $('closePlacement').disabled=false;$('undoPlacement').disabled=!state.enabled||!state.undo_available;
+ for(const button of $('placementDock').querySelectorAll('[data-placement-panel]'))button.setAttribute('aria-expanded',String(open&&button.dataset.placementPanel===placementPanelTab));
+ for(const content of $('placementDock').querySelectorAll('[data-placement-content]'))content.hidden=content.dataset.placementContent!==placementPanelTab;
+ $('placementTitle').textContent={rotate:'Girar a peça',origin:'Escolher a origem',move:'Mover a peça'}[placementPanelTab]||'Posicionar peça';
+ for(const button of $('placementDock').querySelectorAll('[data-placement-xy]'))button.setAttribute('aria-pressed',String(!!state.origin.xy&&button.dataset.placementXy===state.origin.xy.join(',')));
+ for(const button of $('placementDock').querySelectorAll('[data-placement-z]'))button.setAttribute('aria-pressed',String(button.dataset.placementZ===state.origin.z));
+ const xy=$('placementDock').querySelector('[data-placement-xy][aria-pressed="true"]');
+ $('placementOriginLabel').textContent=`XY: ${xy?.title||'personalizada'} · Z: ${{top:'topo',center:'meio',bottom:'base'}[state.origin.z]||'personalizada'}`;
+ $('placementDimensions').textContent=data?bounds().size.map(v=>fmt(v,2)).join(' × ')+' mm':'';
+ placementGizmo.visible=placementBox.visible=open;
+ if(data){
+  placementGizmo.scale.setScalar(Math.max(2,Math.min(15,Math.max(...bounds().size)*.12)));
+  placementBox.box.min.fromArray(bounds().minimum);placementBox.box.max.fromArray(bounds().maximum);
+ }
+}
+function setPlacementPanel(panel){
+ if(panel!==null&&!['rotate','origin','move'].includes(panel))throw Error('Painel de posicionamento inválido.');
+ if(panel!==null){commandIdle();if(!data)throw Error('Abra um STL primeiro.');stop();if(mode!=='paths')setMode('paths');cancelDraw();}
+ placementPanelTab=panel;syncPlacementUi();
+}
+function placementSnapshot(){
+ return {scene:{...data,tool:structuredClone(tool),settings:structuredClone(readSettings({strict:false})),
+  operations:structuredClone(readOperations({strict:false})),placement:structuredClone(placement),
+  windows:structuredClone(windows),stock:readStockSettings(),motion,project_id:computedProject},
+  camera:{position:camera.position.toArray(),target:controls.target.toArray(),zoom:camera.zoom}};
+}
+function restorePlacementCamera(frame,recenter=false){
+ if(recenter){
+  const target=bounds().minimum.map((v,i)=>(v+bounds().maximum[i])/2);
+  camera.position.fromArray(frame.position.map((v,i)=>v-frame.target[i]+target[i]));controls.target.fromArray(target);
+ }else{camera.position.fromArray(frame.position);controls.target.fromArray(frame.target);}
+ camera.zoom=frame.zoom;camera.updateProjectionMatrix();controls.update();
+}
+async function applyPlacementCandidate(candidate){
+ commandIdle();if(!data)throw Error('Abra um STL primeiro.');
+ if(candidate.xy_origin==='keep'&&candidate.z_origin==='keep'&&samePlacement(candidate,placement,data.mesh))return false;
+ const saved=placementSnapshot(),atRevision=revision;placementUiBusy=true;syncPlacementUi();stop();
+ try{
+  const inspected=await api('/api/inspect',{asset:data.asset,placement:candidate});
+  if(revision!==atRevision||busy||exportBusy)throw Error('A configuração mudou durante o posicionamento. Tente novamente.');
+  adopt(sceneForNewMesh(inspected,saved.scene.settings,saved.scene.operations));
+  restorePlacementCamera(saved.camera);placementUndo={...saved,revision};
+  for(const axis of ['X','Y','Z'])$('placementDelta'+axis).value='0';
+  toast('Posição aplicada. Regiões limpas; use Desfazer posição para recuperá-las.');return true;
+ }finally{placementUiBusy=false;syncPlacementUi();}
+}
+async function runPlacementAction(action){
+ commandIdle();if(!data)throw Error('Abra um STL primeiro.');
+ return applyPlacementCandidate(placementAction(placement,data.mesh,data.triangles,action));
+}
+function undoPlacement(){
+ commandIdle();if(!placementUndo||placementUndo.revision!==revision)throw Error('Nenhuma mudança de posição disponível para desfazer.');
+ const saved=placementUndo;placementUndo=null;adopt(saved.scene);restorePlacementCamera(saved.camera);syncPlacementUi();
+ toast('Posição e regiões anteriores recuperadas.');
+}
+const placementClick=action=>runPlacementAction(action).catch(error=>toast(error.message,true));
+for(const button of $('placementDock').querySelectorAll('[data-placement-panel]'))button.onclick=()=>{
+ try{setPlacementPanel(placementPanelTab===button.dataset.placementPanel?null:button.dataset.placementPanel);}catch(error){toast(error.message,true);}
 };
+for(const button of $('placementDock').querySelectorAll('[data-placement-rotate]'))button.onclick=()=>placementClick({kind:'rotate',axis:button.dataset.placementRotate,turns:Number(button.dataset.turns)});
+for(const button of $('placementDock').querySelectorAll('[data-placement-xy]'))button.onclick=()=>placementClick({kind:'origin_xy',anchor:button.dataset.placementXy.split(',').map(Number)});
+for(const button of $('placementDock').querySelectorAll('[data-placement-z]'))button.onclick=()=>placementClick({kind:'origin_z',anchor:button.dataset.placementZ});
+$('closePlacement').onclick=()=>setPlacementPanel(null);
+$('flipPlacement').onclick=()=>placementClick({kind:'flip'});$('resetPlacement').onclick=()=>placementClick({kind:'reset'});
+$('movePlacement').onclick=()=>{
+ try{placementClick({kind:'translate',delta_mm:['X','Y','Z'].map(axis=>numericValue($('placementDelta'+axis).value,'Deslocamento '+axis))});}catch(error){toast(error.message,true);}
+};
+$('undoPlacement').onclick=()=>{try{undoPlacement();}catch(error){toast(error.message,true);}};
+$('applyPlacement').onclick=async()=>{
+ try{
+  const custom=$('face').value==='custom';
+  await applyPlacementCandidate({units:$('units').value,rotation:custom?placement.rotation:($('face').value==='flip'?flip:identity),
+   xy_origin:$('xyOrigin').value,z_origin:$('zOrigin').value,
+   translation_mm:custom&&$('xyOrigin').value==='keep'&&$('zOrigin').value==='keep'?placement.translation_mm:[0,0,0]});
+ }catch(error){toast(error.message,true);}
+};
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&placementPanelTab)setPlacementPanel(null);});
+new MutationObserver(syncPlacementUi).observe($('calculate'),{attributes:true,attributeFilter:['aria-busy']});
+new MutationObserver(syncPlacementUi).observe($('exportNC'),{attributes:true,attributeFilter:['disabled']});
 const operationList=createOperationList($('operationList'),{
  onChange:state=>{
   const next=operationOptionsFromList(state);$('operationOrder').value=next.order;
@@ -780,6 +879,7 @@ function commandState(detail=false){
  if(!detail){delete s.boundaries_mm;delete s.exclusions_mm;}
  return {model:data?{name:data.name,asset:data.asset,...data.mesh}:null,tool,settings:s,operations:o,operation_list:operationList.getState(),placement,
   workspace:{empty:!data,empty_visible:!$('emptyScene').hidden,can_calculate:!$('calculate').disabled,can_save:!$('saveProject').disabled},
+  placement_ui:placementUiState(detail),
   stock:data?readStockSettings():null,regions,notes:data?.notes||'',revision,smart_plan:smartPlanForState(currentSmartPlan(),detail),
   regions_ui:{picker:regionPicker?.state(),drawing:drawMode?{kind:drawMode==='boundary'?'keepin':'keepout',shape:drawShape,vertices:draftPoints.length}:null},
   feedback:{cutout_recovery:cutoutRecovery?{action:cutoutRecovery.action,label:cutoutRecovery.label,message:cutoutRecovery.message}:null},
@@ -794,7 +894,7 @@ function commandState(detail=false){
 function commandObject(value,label){if(!value||typeof value!=='object'||Array.isArray(value))throw Error(label+': informe um objeto.');return value;}
 function commandNumber(value,label,min=-Infinity,max=Infinity){if(typeof value!=='number'||!Number.isFinite(value)||value<min||value>max)throw Error(label+': número fora do intervalo.');return value;}
 function commandVector(value,label,n=3){if(!Array.isArray(value)||value.length!==n)throw Error(label+': vetor inválido.');return value.map(v=>commandNumber(v,label));}
-function commandIdle(){if(busy||exportBusy)throw Error('Aguarde ou cancele o cálculo/exportação antes de alterar o projeto.');}
+function commandIdle(){if(busy||exportBusy||placementUiBusy)throw Error('Aguarde ou cancele o cálculo/exportação ou posicionamento antes de alterar o projeto.');}
 function commandRequest({strict=false}={}){if(!data)throw Error('Abra um STL primeiro.');return {asset:data.asset,placement,tool,settings:readSettings({strict}),operations:readOperations({strict}),notes:data.notes||'',ui:{windows,stock:readStockSettings(),approximate_regions:!!data.approximate_regions}};}
 async function patchCommandConfig(command){
  commandIdle();const atRevision=revision,next=commandRequest();
@@ -850,6 +950,9 @@ async function executeCommand(command){
   const inspected=await api('/api/inspect',{asset:data.asset,placement:p});
   adopt(sceneForNewMesh(inspected,readSettings({strict:false}),readOperations({strict:false})));return commandState();
  }
+ if(action==='placement.panel'){setPlacementPanel(command.panel??null);return commandState();}
+ if(action==='placement.action'){await runPlacementAction(command);return commandState();}
+ if(action==='placement.undo'){undoPlacement();return commandState();}
  if(action==='tool.set'||action==='tool.save'){
   commandIdle();const chosen=command.tool||tools.find(t=>t.id===command.id);if(!chosen)throw Error('Ferramenta não encontrada.');
   const candidate={...tool,...chosen};const next={...commandRequest(),tool:candidate};
@@ -883,7 +986,7 @@ async function executeCommand(command){
   windows=null;regionsChanged();return commandState();
  }
  if(action==='operation.tab'){if(!operationTabs.includes(command.tab))throw Error('tab deve ser rough, drill ou cutout.');selectOperationTab(command.tab);return {tab:command.tab};}
- if(action==='calculate.start')return startCalculation(true);
+ if(action==='calculate.start'){if(placementUiBusy)throw Error('Aguarde o posicionamento da peça.');return startCalculation(true);}
  if(action==='calculate.cancel'){if(!activeCalculationJob)throw Error('Nenhum cálculo ativo.');return api('/api/cancel',{job:activeCalculationJob});}
  if(action==='project.save')return api('/api/save',request());
  if(action==='nc.export'){

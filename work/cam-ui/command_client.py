@@ -26,6 +26,9 @@ def command_schema():
             'project.open': {'path':'projeto.zip'}, 'project.save': {'path':'destino.zip','overwrite':False},
             'demo.open': {}, 'config.patch': {'settings':'campos parciais','operations':'campos parciais','stock':'x0,y0,x1,y1,step (.25/.5/1)','notes':'texto'},
             'placement.set': {'placement':'units mm/inch, rotation matriz 3x3, translation_mm vetor 3, xy_origin minimum/keep/center, z_origin top/keep/bottom'},
+            'placement.panel': {'panel':'rotate/origin/move, ou null para recolher os controles na vista 3D'},
+            'placement.action': {'kind':'rotate: axis x/y/z, turns -1/+1; flip; reset; origin_xy: anchor [0/.5/1,0/.5/1]; origin_z: anchor top/center/bottom; translate: delta_mm [x,y,z]'},
+            'placement.undo': {'description':'Recupera a posição, regiões e configuração anteriores à última ação visual, sem alterações posteriores'},
             'tools.list': {}, 'tool.set': {'id':'ID cadastrado, ou tool com campos'},
             'tool.save': {'tool':'registro completo/parcial da ferramenta selecionada','replace':False},
             'regions.add': {'kind':'keepin/keepout','shape':'rectangle: min/max [x,y]; circle: center/radius; ellipse: center/radius_x/radius_y; polygon/freehand: points [[x,y],...]'},
@@ -49,7 +52,8 @@ def command_schema():
             'simulation.reset': {}, 'simulation.wait': {'surface':'grid/solid','timeout_s':120},
             'simulation.sample': {'points':'1 a 64 posições XY [[x,y],...]; lê a altura das células da grade atual após simulation.wait, sem alterar a reprodução'},
             'diagnostics': {'lines':'últimas linhas do log, 1 a 200'},
-            'command.result': {'command_id':'identificador de comando que excedeu o prazo'}, 'app.close': {}},
+            'command.result': {'command_id':'identificador de comando que excedeu o prazo'},
+            'app.show': {'description':'Mostra e restaura a janela pelo host nativo, mesmo com a interface suspensa'}, 'app.close': {}},
         'fields': {name:[field.name for field in fields(cls)] for name,cls in (
             ('settings',RoughingSettings),('operations',OperationSettings),('tool',Tool))},
         'notes': ['Configurações são validadas antes de alterar a interface.',
@@ -183,6 +187,7 @@ class CommandClient:
                 if ready and (surface=='grid' or state['solid_ready']):return state
                 if time.monotonic()>deadline:raise CommandError('A simulação não ficou pronta dentro do prazo.',state=state)
                 time.sleep(.3)
+        if action=='app.show':return self.http('/api/window/show',{})
         if action=='app.close':return self.http('/api/shutdown',{})
         result=self.ui(command)
         if action=='calculate.start':self.last_job=result['job']

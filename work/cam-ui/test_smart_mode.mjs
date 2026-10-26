@@ -131,3 +131,11 @@ let selectedTab=null,focused=false;context.selectOperationTab=tab=>selectedTab=t
 vm.runInContext(source.split('\n').find(line=>line.startsWith("$('reviewCenterCutting').onclick=")),context);element('reviewCenterCutting').onclick();
 assert.equal(selectedTab,'drill');assert.equal(focused,true,'The Rough hint links to the original capability checkbox, without duplicating it');
 console.log('Smart mode: effective policy, manual preservation, stock summary, fixed operation list, readonly preview, concurrency and stale response guards passed.');
+
+// Through cores are delegated explicitly; a blind pocket is never described
+// as already removed merely because its surrounding contour is selected.
+const corePlan={enabled:true,sequence:['roughing','cutout'],exterior_strategy:{mode:'features_then_cutout'},internal_cutouts:{selected_count:1,selected_indices:[0]}};
+assert.match(smartPolicyText(corePlan).order,/internos passantes antes/);
+assert.match(smartPolicyText(corePlan).regions,/preservados como sobra/);
+assert.match(smartPlanText(corePlan),/sem desbastar todo o interior/);
+assert.match(smartPlanText(corePlan),/simulação mantém o miolo como sobra/);

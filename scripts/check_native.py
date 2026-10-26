@@ -49,6 +49,16 @@ def main():
             and scene['model']['triangle_count']==68 and scene['simulation']['moves']==0)
         check('Loaded model enables preparation and save',not scene['workspace']['empty_visible']
               and scene['workspace']['can_calculate'] and scene['workspace']['can_save'])
+        panel=run('placement.panel',panel='rotate')
+        check('Placement controls open in the viewport without changing the part',
+              panel['placement_ui']['panel']=='rotate' and panel['revision']==scene['revision'])
+        turned=run('placement.action',kind='rotate',axis='x',turns=1)
+        restored=run('placement.undo')
+        check('Visual rotation and undo preserve the real model and setup',
+              turned['model']['bounds_mm']['size']==[20,5,20]
+              and restored['model']['bounds_mm']==scene['model']['bounds_mm']
+              and restored['settings']==scene['settings'])
+        run('placement.panel',panel=None)
         task=run('calculate.start');status=run('calculate.status',job=task['job'])
         check('Progress status is available',status['job']==task['job'])
         result=run('calculate.wait',job=task['job'],timeout_s=180)

@@ -84,7 +84,7 @@ def _track_depth_supported(a,b,previous,top,step):
         elif g1>EPS:hi=lo+(hi-lo)*(EPS-g0)/(g1-g0)
         if hi>=lo:intervals.append((lo,hi))
     add_interval(0,1,top-a[2]-step,top-b[2]-step)
-    for c,e in overlapping(previous,a,b):
+    for c,e in overlapping(previous,a,b,reverse=True):
         cx=c[0]-a[0];cy=c[1]-a[1];ex=e[0]-a[0];ey=e[1]-a[1]
         tc=(cx*dx+cy*dy)/squared;te=(ex*dx+ey*dy)/squared
         if abs(te-tc)<1e-15:continue
@@ -410,10 +410,14 @@ def validate_motion(plan,source,*,progress=None,prior_motion=None):
     if plan['safe_z']<minimum_plane-EPS or plan['initial_position'][2]<plan['safe_z']-EPS:
         raise MotionPlanningError('Passage plane does not clear the declared stock/obstacles')
     source_edges={}
+    internal_pending=set()
     for li,layer in enumerate(source['layers']):
         for pi,poly in enumerate(layer['polylines']):
             for ei,(a,b) in enumerate(zip(poly['points'],poly['points'][1:])):
                 source_edges[(li,pi,ei)]=(a,b)
+                if (source.get('order')=='internal_contours_full_depth_then_external'
+                        and layer.get('contour_kind')=='internal'):
+                    internal_pending.add((li,pi,ei))
     current=plan['initial_position'];visited={};tracks={};seen=Counter();angles=[]
     completed=CutTrackIndex(source['tool']['diameter'])
     cleared_area=ClearedArea(source['tool']['diameter'],plan['stock_top'])
@@ -437,6 +441,8 @@ def validate_motion(plan,source,*,progress=None,prior_motion=None):
         if move['id']!=index or not _close(a,current) or not all(math.isfinite(x) for x in a+b):
             raise MotionPlanningError('Invalid move continuity or coordinates')
         if kind in ('cut','ramp','ramp_return'):
+            if (internal_pending and source['layers'][move['layer']].get('contour_kind')=='external'):
+                raise MotionPlanningError('Cutout externo iniciado antes de concluir os recortes internos')
             key=(move['layer'],move['polyline'],proof['source_edge'])
             u,v=source_edges[key];direction=np.array(v[:2])-u[:2]
             denominator=float(direction@direction)
@@ -452,11 +458,12 @@ def validate_motion(plan,source,*,progress=None,prior_motion=None):
                     raise MotionPlanningError('Cut geometry changed')
                 xy_pair=tuple(sorted([_xy_key(a),_xy_key(b)]))
                 heights=[a[2],b[2]] if _xy_key(a)==xy_pair[0] else [b[2],a[2]]
-                candidates=[[plan['stock_top']]*2]+tracks.get(xy_pair,[])
+                candidates=reversed(tracks.get(xy_pair,[]))
                 # An identical previously cut XY edge bounds remaining stock
                 # by its linear tip-height profile. Both endpoint differences
                 # bound the whole new linear edge's material depth.
-                supported=any(max(old[i]-heights[i] for i in (0,1))<=step+EPS for old in candidates)
+                supported=(plan['stock_top']-min(heights)<=step+EPS or
+                    any(max(old[0]-heights[0],old[1]-heights[1])<=step+EPS for old in candidates))
                 if not supported:
                     supported=_track_depth_supported(a,b,completed,plan['stock_top'],step)
                 if not supported:
@@ -467,6 +474,7 @@ def validate_motion(plan,source,*,progress=None,prior_motion=None):
                 completed.append((a,b))
                 cleared_area.add(a,b)
                 seen[key]+=1
+                internal_pending.discard(key)
                 for p in (a,b):visited[_xy_key(p)]=min(visited.get(_xy_key(p),math.inf),p[2])
             elif kind=='ramp':
                 if not _track_depth_supported(a,b,completed,plan['stock_top'],step):

@@ -15,6 +15,8 @@ from track_index import CutTrackIndex
 GUARD=.005
 MAX_UNION_ENTRIES=256
 MAX_UNION_BYTES=32*1024*1024
+MAX_SUBSET_CANDIDATES=4096
+MAX_LOCAL_SUBSETS=1024
 
 
 def capsule(a,b,radius):
@@ -36,6 +38,7 @@ class ClearedArea:
         self.cache=OrderedDict();self.proofs=0;self.xy_records={};self.proven=set()
         self.union_cache=OrderedDict();self.union_cache_bytes=0
         self.union_cache_hits=0;self.union_cache_misses=0
+        self.local_subsets=OrderedDict()
 
     def _union(self,subjects):
         # Reuse only byte-identical ordered operands. Height eligibility and
@@ -87,6 +90,24 @@ class ClearedArea:
         if query in self.proven:return True
         # Circumscribed point disk: apothem exceeds the true tool radius.
         r=(self.radius+GUARD)/math.cos(math.pi/128) if math.dist(a[:2],b[:2])<1e-12 else self.radius+GUARD
+        required=capsule(a,b,r)
+        if not required:return False
+        cell=tuple(math.floor((a[i]+b[i])/(2*self.radius)) for i in range(2))
+        saved=self.local_subsets.get(cell)
+        if saved:
+            subset=[]
+            for key in saved:
+                c,e,_=self.cuts.records[self.xy_records[key]]
+                if max(c[2],e[2])>height:break
+                footprint=self.cache.get(key)
+                if footprint is None:
+                    footprint=capsule(c,e,self.radius-GUARD);self.cache[key]=footprint
+                    if len(self.cache)>10000:self.cache.popitem(last=False)
+                subset.extend(footprint)
+            else:
+                if not boolean(required,subset,pyclipr.Difference):
+                    self.local_subsets.move_to_end(cell)
+                    self.proofs+=1;self.proven.add(query);return True
         # Only nearby old footprints can cover this request. The sum of old
         # and required radii gives a conservative centerline bounding box;
         # the index merely drops disjoint cuts, never establishes clearance.
@@ -97,8 +118,6 @@ class ClearedArea:
         for c,e,key in self.cuts.overlapping(low,high):
             if max(c[2],e[2])<=height:eligible.append((c,e,key))
         if not eligible:return False
-        required=capsule(a,b,r)
-        if not required:return False
         # A few vertices of the required polygon must at least fall inside
         # the analytic (slightly enlarged) old capsules. This is rejection
         # only; the original polygon difference still proves every success.
@@ -115,6 +134,45 @@ class ClearedArea:
         distance=relative-np.clip(fraction,0,1)[:,:,None]*vectors
         if np.any(np.all(np.einsum('sij,sij->si',distance,distance)>
                          (self.radius-GUARD+2/SCALE)**2,axis=1)):return False
+        # Dense cleanup contours can cover the eight extreme probes yet
+        # leave a small gap between them. Reject those gaps before building
+        # thousands of overlapping round offsets. This is rejection only:
+        # every success still requires the original polygon difference.
+        if 32<len(eligible)<=MAX_SUBSET_CANDIDATES:
+            coverage=[]
+            for start in range(0,len(vertices),16):
+                relative=vertices[start:start+16,None,:]-starts
+                fraction=np.divide(np.einsum('sij,ij->si',relative,vectors),squared,
+                    out=np.zeros(relative.shape[:2]),where=squared>0)
+                distance=relative-np.clip(fraction,0,1)[:,:,None]*vectors
+                covered=np.einsum('sij,sij->si',distance,distance)<=(self.radius-GUARD+2/SCALE)**2
+                if np.any(~np.any(covered,axis=1)):return False
+                coverage.append(covered)
+            # A small subset of completed cuts often already covers this
+            # short edge. Greedy vertex coverage merely chooses candidates;
+            # the SAME polygon difference certifies the entire swept disk,
+            # including its interior. Failure falls back to all operands.
+            covered=np.concatenate(coverage);remaining=np.ones(len(vertices),dtype=bool);selected=[]
+            for _ in range(min(16,len(eligible))):
+                scores=np.sum(covered[remaining],axis=0)
+                index=int(np.argmax(scores))
+                if not scores[index]:break
+                selected.append(index);remaining&=~covered[:,index]
+                if not remaining.any():
+                    subset=[]
+                    for index in selected:
+                        c,e,key=eligible[index]
+                        footprint=self.cache.get(key)
+                        if footprint is None:
+                            footprint=capsule(c,e,self.radius-GUARD);self.cache[key]=footprint
+                            if len(self.cache)>10000:self.cache.popitem(last=False)
+                        subset.extend(footprint)
+                    if not boolean(required,subset,pyclipr.Difference):
+                        self.local_subsets[cell]=tuple(eligible[index][2] for index in selected)
+                        self.local_subsets.move_to_end(cell)
+                        if len(self.local_subsets)>MAX_LOCAL_SUBSETS:self.local_subsets.popitem(last=False)
+                        self.proofs+=1;self.proven.add(query);return True
+                    break
         additions=[]
         for c,e,key in eligible:
             # Geometry depends on XY only. Repeated passes at deeper levels

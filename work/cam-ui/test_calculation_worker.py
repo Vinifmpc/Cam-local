@@ -32,6 +32,9 @@ class CalculationWorkerTests(unittest.TestCase):
         self.assertGreater(len(result['motion']['moves']),0)
         self.assertTrue(events[0]['worker_alive']);self.assertIsInstance(events[0]['worker_pid'],int)
         self.assertTrue(self.project.with_name('result.json').exists())
+        encoded=self.project.with_name('result.json').read_text(encoding='utf8')
+        self.assertEqual(json.loads(encoded),result)
+        self.assertEqual(encoded.count('\n'),1)
 
     def test_child_exception_is_reported_and_persisted(self):
         self.project.write_text('{invalid JSON',encoding='utf8')

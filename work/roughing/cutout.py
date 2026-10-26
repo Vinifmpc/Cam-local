@@ -6,13 +6,23 @@ undercut machining. This is an independent Clipper2 implementation.
 from dataclasses import asdict
 import numpy as np
 from camadas_desbaste import planejar_camadas
-from region_core import offset, signed_area, center_regions, pyclipr, SCALE
+from region_core import offset, signed_area, center_regions, boolean, pyclipr, SCALE
 from stl_roughing import projected_shadow
+
+
+def internal_profile_map(shadow,tracks):
+    """Match compensated hole loops by full polygon containment, not centres."""
+    holes=[p[::-1] for p in shadow if signed_area(p)<0]
+    result=[]
+    for hole in holes:
+        result.append([p for p in tracks if signed_area(p)<0
+                       and not boolean([p[::-1]],[hole],pyclipr.Difference)])
+    return holes,result
 
 
 def generate_cutout(triangles, *, diameter, tool_length, top, bottom, stepdown,
                     direction='climb', boundaries=None, exclusions=None, margin=.01,
-                    contours='all'):
+                    contours='all',internal_indices=None):
     if direction not in ('climb','conventional'):
         raise ValueError('Sentido de fresagem inválido')
     if contours not in ('external','all'):
@@ -24,11 +34,19 @@ def generate_cutout(triangles, *, diameter, tool_length, top, bottom, stepdown,
     tracks=offset(shadow,diameter/2)
     if not tracks:raise ValueError('Silhueta sem contorno usinável com esta fresa')
     holes=sum(signed_area(p)<0 for p in shadow)
-    if contours=='all' and sum(signed_area(p)<0 for p in tracks)!=holes:
+    if internal_indices is None and contours=='all' and sum(signed_area(p)<0 for p in tracks)!=holes:
         tool_diameter=format(diameter,'.6g').replace('.',',')
         raise ValueError('Cutout: há contorno interno estreito demais para a fresa de diâmetro '
             +tool_diameter+" mm. Para apenas soltar a peça, selecione somente contornos externos (Soltar a peça · somente externo). Para usinar os internos, use uma fresa menor.")
-    if contours=='external':tracks=[p for p in tracks if signed_area(p)>0]
+    if internal_indices is not None:
+        if (not isinstance(internal_indices,list) or any(type(i) is not int or not 0<=i<holes for i in internal_indices)
+                or len(set(internal_indices))!=len(internal_indices)):
+            raise ValueError('Índices de recortes internos inválidos')
+        _,profiles=internal_profile_map(shadow,tracks)
+        if any(len(profiles[i])!=1 for i in internal_indices):
+            raise ValueError('Recorte interno automático não corresponde a um contorno compensado completo')
+        tracks=[p for p in tracks if signed_area(p)>0]+[profiles[i][0] for i in internal_indices]
+    elif contours=='external':tracks=[p for p in tracks if signed_area(p)>0]
     if not tracks:raise ValueError('Silhueta sem contorno externo usinável com esta fresa')
     # Hole loops (negative winding) are completed to full depth before outer
     # loops, so the surrounding part is still attached while machining holes.
@@ -47,7 +65,7 @@ def generate_cutout(triangles, *, diameter, tool_length, top, bottom, stepdown,
             _,outside=engine.execute(pyclipr.Difference,pyclipr.FillRule.NonZero,returnOpenPaths=True)
             if any(np.linalg.norm(np.diff(q[:,:2],axis=0),axis=1).sum()>1e-6 for q in outside):
                 raise ValueError('Cutout bloqueado pelas regiões: o contorno completo não cabe na área permitida')
-    selection=contours
+    selection='automatic' if internal_indices is not None else contours
     layers=[];contour_records=[]
     for ci,p in enumerate(tracks):
         kind='internal' if signed_area(p)<0 else 'external'
@@ -64,11 +82,13 @@ def generate_cutout(triangles, *, diameter, tool_length, top, bottom, stepdown,
                            'polylines':[{'points':points}]})
     edges=sum(len(p['points'])-1 for layer in layers for p in layer['polylines'])
     if edges>250000:raise ValueError('Cutout excede o limite de 250.000 arestas')
-    return {'schema_version':1,'units':'mm','scope':'silhouette_2d_cutout',
+    result={'schema_version':1,'units':'mm','scope':'silhouette_2d_cutout',
         'tool':{'type':'flat_cylindrical','diameter':diameter,'length':tool_length},
         'parameters':{'z_top':top,'z_bottom':bottom,'stepdown':stepdown,'direction':direction},
         'contours_selection':selection,'internal_contours_total':holes,
-        'skipped_internal_contours':holes if selection=='external' else 0,
+        'skipped_internal_contours':holes-len(internal_indices) if internal_indices is not None else holes if selection=='external' else 0,
         'depth_levels':[asdict(v) for v in levels],'contours':contour_records,
         'layers':layers,'cutting_edges':edges,'order':'internal_contours_full_depth_then_external',
         'limitations':['Full projected silhouette, not variable-Z walls','No holding tabs or holder simulation']}
+    if internal_indices is not None:result['selected_internal_indices']=list(internal_indices)
+    return result

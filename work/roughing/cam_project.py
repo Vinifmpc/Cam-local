@@ -249,7 +249,8 @@ def calculate_project(path,*,include_motion=False,progress=None):
         bottom=validate_operations(options,s,tool)
         cutout=generate_cutout(mesh.triangles,diameter=tool.diameter_mm,tool_length=tool.cutting_length_mm,
             top=s.stock_top_mm,bottom=bottom,stepdown=options.cutout_stepdown_mm,direction=options.cutout_direction,
-            contours=options.cutout_contours)
+            contours=options.cutout_contours,
+            internal_indices=(smart_plan['internal_cutouts']['selected_indices'] or None) if smart_plan is not None else None)
         notify('Contornos do cutout conferidos',.10)
     notify('Calculando regiões e passadas de desbaste',.12)
     result=generate_stl_roughing(mesh.triangles,diameter=tool.diameter_mm,
@@ -262,7 +263,7 @@ def calculate_project(path,*,include_motion=False,progress=None):
         raster_angle_deg=s.raster_angle_deg,compress_collinear=s.compress_collinear,
         region_mode=s.region_mode,cleanup_contours=s.cleanup_contours,domain_mode=s.domain_mode,
         retention=retention,
-        center_domain=smart_plan['automatic_regions']['polygons_mm'] if smart_plan is not None else None,
+        center_domain=smart_plan['automatic_regions'].get('source_polygons_mm',smart_plan['automatic_regions']['polygons_mm']) if smart_plan is not None else None,
         protected_overlap_mm=smart_plan['automatic_regions']['quantized_boundary_overlap_mm'] if smart_plan is not None else 0,
         defer_depth_staging=smart_plan is not None,
         progress=(lambda phase,fraction:notify(phase,.12+.32*fraction)) if progress else None) if options.roughing_enabled else {
@@ -272,7 +273,8 @@ def calculate_project(path,*,include_motion=False,progress=None):
         notify(('Ordenando os rebaixos e bolsões do Rough' if
                 smart_plan['exterior_strategy']['mode']=='features_then_cutout' else
                 'Preparando o canal externo para liberar a peça'),.445)
-        result=add_preparation_contours(result,mesh.triangles,tool,s,options,smart_plan)
+        result=add_preparation_contours(result,mesh.triangles,tool,s,options,smart_plan,
+            progress=(lambda phase,fraction:notify(phase,.445+.005*fraction)) if progress else None)
         validate_smart_geometry(result,mesh.triangles,tool,s,options,smart_plan)
     result['tool_profile']=tool.as_dict()
     result['source']=mesh.summary()

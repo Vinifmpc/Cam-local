@@ -4,6 +4,18 @@ O executável recebe comandos JSON e controla o mesmo projeto aberto na janela.
 Não depende de mouse, teclado, navegador externo ou capturas de tela. O serviço
 escuta apenas em `127.0.0.1`, usa porta dinâmica e token por sessão.
 
+Para ensaios que não devem disputar o foco com o usuário, inicie diretamente o EXE com `--data-dir <perfil-isolado> --hidden` e conecte o cliente a esse perfil. A janela e o serviço reais são usados; reprodução contínua permanece pausada quando a janela está oculta, mas cálculo, exportação e posicionamento da simulação por comandos funcionam normalmente. Feche o perfil ao terminar com `app.close`. O perfil padrão do usuário não aceita `--hidden`.
+
+`app.show` mostra e restaura a janela através do host nativo, sem depender do laço de comandos JavaScript. Pode ser usado para retomar uma janela minimizada ou suspensa antes de consultar o estado ou a simulação.
+
+## Posicionar a peça na vista 3D
+
+A barra de ícones na própria visualização reúne Girar, Origem e Mover. `placement.panel` com `panel:"rotate"`, `"origin"`, `"move"` ou `null` abre ou recolhe os mesmos painéis visuais. Abrir um painel não altera a malha nem limpa regiões; a reprodução pausa e a peça fica visível em Percursos.
+
+Use `placement.action` com `kind:"rotate",axis:"x",turns:1` para +90° em X, `kind:"flip"` para inverter a face em X, ou `kind:"reset"` para a orientação original. `origin_xy` recebe `anchor:[0,0]` para o canto mínimo, `[0.5,0.5]` para o centro, ou qualquer um dos nove pares de 0 / 0.5 / 1. `origin_z` recebe `anchor:"top"`, `"center"` ou `"bottom"`. `translate` recebe `delta_mm:[x,y,z]`, um deslocamento relativo em milímetros, inclusive quando o STL usa polegadas.
+
+Uma mudança efetiva passa pela inspeção real do STL, ajusta as profundidades e limpa as regiões anteriores. `placement.undo` recupera a última posição, regiões e percurso anterior enquanto nenhuma outra configuração tiver sido alterada. Um deslocamento zero não invalida o percurso. `state` inclui `placement_ui`; com `detail:true`, informa também se os controles cabem na área 3D.
+
 ## Uso rápido no PowerShell
 
 Na pasta deste executável:

@@ -17,6 +17,10 @@ export function smartEntryHint(centerCutting){
 }
 export function smartPolicyText(plan){
  const mode=plan?.exterior_strategy?.mode;
+ if(plan?.internal_cutouts?.selected_count>0)return {
+  order:'Rough: rebaixos e bolsões com fundo. Cutout: recortes internos passantes antes do contorno externo completo.',
+  regions:'Miolos passantes vantajosos ficam preservados como sobra e são recortados pelo Cutout. O Rough usina os demais detalhes 3D.',
+  reuse:'O Cutout conclui cada recorte interno antes de soltar o exterior; só omite camadas comprovadamente já removidas.'};
  if(mode==='features_then_cutout')return {
   order:'Rough: rebaixos e bolsões, inclusive abertos à borda. Cutout: contorno externo completo, em camadas, após o Rough.',
   regions:'O Rough segue furos, bolsões, rebaixos e formas 3D da peça, inclusive abertos à borda. O contorno externo completo fica para o Cutout.',
@@ -40,6 +44,9 @@ export function smartPlanText(plan,format=v=>String(v)){
   details.push(`Rough: rebaixos e bolsões, inclusive abertos à borda, e furos compatíveis; limite Z ${format(plan.roughing_bottom_mm)} mm. O perfil externo completo fica para o Cutout.`,
    `Cutout: contorno externo completo até Z ${format(plan.cutout_bottom_mm)} mm, em camadas de até ${format(plan.cutout_stepdown_mm)} mm.`,
    'Peças sem furos ou rebaixos podem ficar sem cortes de Rough.');
+  if(plan.internal_cutouts?.selected_count>0)details.push(
+   `${plan.internal_cutouts.selected_count} miolo(s) passante(s) recortado(s): o Rough preserva essas sobras, sem desbastar todo o interior. O Cutout termina os internos antes do exterior.`,
+   'A simulação mantém o miolo como sobra recortada; apoie essa sobra e remova-a após a usinagem.');
  }else if(strategy?.mode==='rough_prepare_then_release'){
   details.push(`Rough: formas da peça e preparo do canal externo de acesso; limite Z ${format(plan.roughing_bottom_mm)} mm e pele externa de ${format(plan.skin_mm)} mm, até Z ${format(plan.retention_z_mm)} mm.`,
    `Cutout: liberação do contorno externo até Z ${format(plan.cutout_bottom_mm)} mm; descida máxima de ${format(plan.cutout_stepdown_mm)} mm.`);

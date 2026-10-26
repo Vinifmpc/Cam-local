@@ -53,6 +53,7 @@ Thumbs.db
 !/work/roughing/depth_staging.py
 !/work/roughing/drill.py
 !/work/roughing/grbl_post.py
+!/work/roughing/internal_cutouts.py
 !/work/roughing/layer_regions.py
 !/work/roughing/layer_roughing.py
 !/work/roughing/mesh_geometry.py

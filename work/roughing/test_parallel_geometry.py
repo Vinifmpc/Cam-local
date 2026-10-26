@@ -15,13 +15,16 @@ from test_stl_roughing import plane,rect
 class ParallelGeometryTests(unittest.TestCase):
     def test_automatic_worker_budget_and_small_job_threshold(self):
         with patch.dict(os.environ,{'CAM_WORKERS':''}),patch('parallel_workers.os.cpu_count',return_value=20):
-            self.assertEqual(worker_limit(),4)
-            self.assertEqual(geometry_workers(25,69_850),4)
+            self.assertEqual(worker_limit(),8)
+            self.assertEqual(geometry_workers(25,69_850),2)
+            self.assertEqual(geometry_workers(25,600_000),8)
             self.assertEqual(geometry_workers(3,100_000),1)
             self.assertEqual(geometry_workers(25,500),1)
         with patch.dict(os.environ,{'CAM_WORKERS':'1'}):
             self.assertEqual(geometry_workers(25,69_850),1)
-        for value in ('zero','0','9'):
+        with patch.dict(os.environ,{'CAM_WORKERS':'32'}),patch('parallel_workers.os.cpu_count',return_value=20):
+            self.assertEqual(worker_limit(),20)
+        for value in ('zero','0','33'):
             with patch.dict(os.environ,{'CAM_WORKERS':value}),self.assertRaisesRegex(ValueError,'CAM_WORKERS'):
                 worker_limit()
 

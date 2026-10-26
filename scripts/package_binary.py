@@ -30,7 +30,7 @@ Abra **CAM Local.exe**. A janela inicia sem peça; use **Abrir STL** ou **Abrir 
 
 O WebView2 precisa estar instalado no Windows. Dados persistentes ficam em `%LOCALAPPDATA%/CAMLocal`; este pacote não inclui projetos ou NCs pessoais.
 
-Use Rough para as formas da peça e Cutout para o contorno externo em camadas. Confira ferramenta, unidade, posicionamento e avanços; simule antes de exportar. O motor é experimental e não se conecta à máquina.
+Use os ícones Girar, Origem e Mover na vista 3D para posicionar a peça. O modo inteligente usa Rough nos detalhes e pode recortar miolos passantes antes de liberar o exterior, preservando a sobra para retirada. Confira ferramenta, unidade, posicionamento e avanços; simule antes de exportar. O motor é experimental e não se conecta à máquina.
 
 Comandos estão em COMANDOS.md. O código original é MIT; bibliotecas mantêm suas próprias licenças. Fontes de terceiros incluídos ficam em sources/. O código do CAM Local acompanha a publicação no GitHub e permite reconstruir o EXE após modificar as bibliotecas.
 ''',encoding='utf8')

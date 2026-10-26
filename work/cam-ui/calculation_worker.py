@@ -29,7 +29,7 @@ def _calculate(project,messages):
         try:
             result=calculate_project(project,include_motion=True,progress=report)
             report('Gravando o resultado calculado',.97)
-            write_json(project.with_name('calculation-result.json'),result)
+            write_json(project.with_name('calculation-result.json'),result,compact=True)
             messages.put({'status':'complete'})
         except BaseException as error:
             failure={'status':'failed','error':str(error),'error_type':type(error).__name__,

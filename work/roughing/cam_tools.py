@@ -26,11 +26,12 @@ def unit_scale(units):
     return 1.0 if units == 'mm' else 25.4
 
 
-def write_json(path, value):
+def write_json(path, value, *, compact=False):
     """Atomic replacement, preserving the prior catalogue/project on failure."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n'
+    payload = json.dumps(value, ensure_ascii=False, indent=None if compact else 2,
+                         separators=(',', ':') if compact else None, allow_nan=False) + '\n'
     fd, temporary = tempfile.mkstemp(prefix=path.name + '.', suffix='.tmp', dir=path.parent)
     try:
         with os.fdopen(fd, 'w', encoding='utf8') as stream:

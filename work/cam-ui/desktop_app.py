@@ -152,7 +152,10 @@ def main():
     parser.add_argument('--port',type=int,help='Porta explícita para comandos (normalmente descoberta automaticamente)')
     parser.add_argument('--start',action='store_true',help='Abrir o aplicativo se necessário antes dos comandos')
     parser.add_argument('--data-dir',type=Path,help='Pasta de dados/perfil separada para automação e ensaios')
+    parser.add_argument('--hidden',action='store_true',help='Janela oculta para ensaios por comandos em perfil isolado')
     args=parser.parse_args();folder=(args.data_dir or data_folder()).resolve();folder.mkdir(parents=True,exist_ok=True)
+    if args.hidden and (args.data_dir is None or folder==data_folder().resolve()):
+        parser.error('--hidden exige --data-dir com um perfil isolado')
     logfile=folder/'desktop.log'
     logging.basicConfig(filename=logfile,encoding='utf8',level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
     # GUI builds have no console. Preserve useful diagnostics for libraries.
@@ -181,8 +184,12 @@ def main():
     (folder/'desktop-runtime.json').write_text(json.dumps({'pid':os.getpid(),'port':server.server_port}),encoding='utf8')
     logging.info('Desktop ready on private loopback port %s',server.server_port)
     try:
-        window=webview.create_window('CAM Local',url,width=1280,height=860,min_size=(900,620),background_color='#152a42')
+        window=webview.create_window('CAM Local',url,width=1280,height=860,min_size=(900,620),background_color='#152a42',
+            hidden=args.hidden,focus=not args.hidden)
         app.on_close=window.destroy
+        def show_window():
+            window.show();window.restore()
+        app.on_show=show_window
         webview.start(gui='edgechromium',debug=False,private_mode=False,storage_path=str(folder/'webview'),
                       localization={'global.saveFile':'Salvar arquivo','global.openFile':'Abrir arquivo','global.cancel':'Cancelar'})
     finally:

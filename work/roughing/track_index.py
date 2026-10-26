@@ -34,19 +34,19 @@ class CutTrackIndex:
         else:
             for cell in cells:self.buckets.setdefault(cell,[]).append(index)
 
-    def overlapping(self,a,b):
+    def overlapping(self,a,b,*,reverse=False):
         bounds=self._bounds(a,b);cells=self._cells(bounds)
-        if cells is None:candidates=range(len(self.records))
+        if cells is None:candidates=range(len(self.records)-1,-1,-1) if reverse else range(len(self.records))
         else:
             candidates=set(self.large)
             for cell in cells:candidates.update(self.buckets.get(cell,()))
             # Preserve source order, including the planner's proof provenance.
-            candidates=sorted(candidates)
+            candidates=sorted(candidates,reverse=reverse)
         x0,y0,x1,y1=bounds
         return (self.records[i] for i in candidates
                 if self.bounds[i][0]<=x1 and self.bounds[i][2]>=x0
                 and self.bounds[i][1]<=y1 and self.bounds[i][3]>=y0)
 
 
-def overlapping(tracks,a,b):
-    return tracks.overlapping(a,b) if isinstance(tracks,CutTrackIndex) else tracks
+def overlapping(tracks,a,b,*,reverse=False):
+    return tracks.overlapping(a,b,reverse=reverse) if isinstance(tracks,CutTrackIndex) else (reversed(tracks) if reverse else tracks)

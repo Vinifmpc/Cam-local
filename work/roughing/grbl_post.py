@@ -51,10 +51,11 @@ def validate_calculation(result,project_path):
             original=generate_cutout(mesh.triangles,diameter=tool.diameter_mm,
                 tool_length=tool.cutting_length_mm,top=s.stock_top_mm,
                 bottom=validate_operations(options,s,tool),stepdown=options.cutout_stepdown_mm,
-                direction=options.cutout_direction,contours=options.cutout_contours)
+                direction=options.cutout_direction,contours=options.cutout_contours,
+                internal_indices=(smart_plan['internal_cutouts']['selected_indices'] or None) if smart_plan is not None else None)
             for key in ('parameters','tool','contours','contours_selection',
-                        'internal_contours_total','skipped_internal_contours'):
-                if job.get(key)!=original[key]:
+                        'internal_contours_total','skipped_internal_contours','selected_internal_indices'):
+                if job.get(key)!=original.get(key):
                     raise ValueError('Contornos do Cutout mudaram; recalcule antes de exportar')
             if prior is not None:
                 if (job.get('rest_source_layers')!=original['layers'] or

@@ -22,7 +22,11 @@ export function smartPlanForState(plan,detail=false){
  const regions={...plan.automatic_regions},loops=regions.polygons_mm||[];
  regions.polygon_count=loops.length;regions.vertex_count=loops.reduce((count,p)=>count+p.length,0);
  delete regions.polygons_mm;
- return {...plan,automatic_regions:regions};
+ delete regions.source_polygons_mm;
+ const internal=plan.internal_cutouts?{...plan.internal_cutouts,features:(plan.internal_cutouts.features||[]).map(feature=>{
+  const compact={...feature};delete compact.excluded_center_polygons_mm;delete compact.core_polygons_mm;return compact;
+ })}:undefined;
+ return {...plan,automatic_regions:regions,...(internal?{internal_cutouts:internal}:{})};
 }
 export function createAutomaticRegionOverlay(THREE,regions,z){
  const group=new THREE.Group(),loops=automaticRegionLoops(regions);

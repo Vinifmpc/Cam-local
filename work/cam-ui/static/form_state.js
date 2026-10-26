@@ -110,6 +110,7 @@ export function calculationSummary(motion){
  const notes=[summary];
  const cutout=motion?.operations?.cutout;
  if(cutout?.contours_selection==='external'&&cutout.skipped_internal_contours>0)notes.push(`Cutout externo: ${cutout.skipped_internal_contours} contorno(s) interno(s) fora do recorte. Para incluí-los, escolha Internos + externo.`);
+ if(cutout?.contours_selection==='automatic')notes.push(`Cutout inteligente: ${cutout.selected_internal_indices?.length||0} recorte(s) interno(s) antes do exterior. Miolos preservados como sobra, sem desbaste integral.`);
  const drill=motion?.operations?.drill;
  if(Number.isFinite(drill?.holes_count))notes.push(`Drill: ${drill.holes_count} furo(s)${drill.helix_count>0?`, ${drill.helix_count} em hélice`:''}.${drill.skipped_holes_count>0?` ${drill.skipped_holes_count} furo(s) ignorado(s); confira a compatibilidade na aba Drill.`:''}`);
  return notes.join(' ');

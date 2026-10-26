@@ -8,7 +8,7 @@ import subprocess
 import zipfile
 
 ROOT=Path(__file__).resolve().parents[1]
-ENGINE='audit_gcode camadas_desbaste cam_operations cam_project cam_setup cam_tools cleared_area cutout cutout_rest depth_staging drill grbl_post layer_regions layer_roughing mesh_geometry motion_planner parallel_workers planar_roughing reference_keepout region_core region_order roughing_compare smart_planner stl_roughing track_index'.split()
+ENGINE='audit_gcode camadas_desbaste cam_operations cam_project cam_setup cam_tools cleared_area cutout cutout_rest depth_staging drill grbl_post internal_cutouts layer_regions layer_roughing mesh_geometry motion_planner parallel_workers planar_roughing reference_keepout region_core region_order roughing_compare smart_planner stl_roughing track_index'.split()
 UI='calculation_worker command_client command_control desktop_app server sample_model'.split()
 
 

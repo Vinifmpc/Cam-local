@@ -72,6 +72,11 @@ class CommandHTTPTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as result:urllib.request.urlopen(req)
         self.assertEqual(result.exception.code,403)
 
+    def test_native_show_does_not_depend_on_a_polling_javascript_client(self):
+        shown=threading.Event();self.app.on_show=shown.set
+        self.assertEqual(self.client.execute({'action':'app.show'}),{'shown':True})
+        self.assertTrue(shown.wait(1));self.assertFalse(self.app.commands.records)
+
     def test_batch_stops_on_failure_and_schema_works_without_app(self):
         report=self.root/'reply.json'
         result=run_commands([{'action':'schema'}],report,self.root,port=1)

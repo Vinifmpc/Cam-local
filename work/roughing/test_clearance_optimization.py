@@ -108,9 +108,9 @@ class ClearanceOptimizationTests(unittest.TestCase):
                         self.assertEqual(cached.covers(a,b,height,require_cut=True),expected)
                         observed.append(expected)
         self.assertIn(True,observed);self.assertIn(False,observed)
-        self.assertGreater(cached.union_cache_hits,0)
+        self.assertGreater(cached.proofs,0)
 
-    def test_union_reuse_still_requires_final_difference_at_each_new_height(self):
+    def test_subset_proof_still_requires_final_difference_at_each_new_height(self):
         area=ClearedArea(2,0)
         for y in np.linspace(-.8,.8,40):area.add([-4,float(y),-2],[4,float(y),-2])
         with patch('cleared_area.boolean',wraps=boolean) as native:
@@ -118,7 +118,7 @@ class ClearanceOptimizationTests(unittest.TestCase):
                 self.assertTrue(area.covers([-2,0,-3],[2,0,-3],height))
         differences=[call for call in native.call_args_list if call.args[2]==pyclipr.Difference]
         self.assertEqual(len(differences),2)
-        self.assertGreater(area.union_cache_hits,0)
+        self.assertEqual(area.proofs,2)
 
     def test_dense_overlapping_capsules_preserve_global_proof_at_multiple_heights(self):
         diameter=3.175;area=ClearedArea(diameter,0);cuts=[]
@@ -145,11 +145,36 @@ class ClearanceOptimizationTests(unittest.TestCase):
             area.add([-3,y,-.5],[3,y,-.5])
         self.assertTrue(area.covers([-1,0,-2],[1,0,-2],-1))
         self.assertFalse(area.covers([-1,0,-2],[1,0,-2],-1.01))
-        # Adding later cuts may make a failed query valid; failures must
-        # never be retained as permanent negative cache entries.
+        # Later completed cuts can make a failed query valid.
         for y in (-.3,.3):area.add([-3,y,-2],[3,y,-2])
         self.assertTrue(area.covers([-1,0,-3],[1,0,-3],-2))
         self.assertTrue(area.covers([-1,0,-2],[1,0,-2],-1))
+
+    def test_vertex_selection_does_not_approve_an_uncut_interior_hole(self):
+        area=ClearedArea(1,0);cuts=[]
+        angles=np.linspace(0,2*math.pi,96,endpoint=False)
+        for angle in angles:
+            a=[.8*math.cos(angle),.8*math.sin(angle),-1]
+            b=[.8*math.cos(angle+.08),.8*math.sin(angle+.08),-1]
+            area.add(a,b);cuts.append((a,b))
+        # The full boundary is covered, but material remains at the centre.
+        self.assertFalse(area.covers([0,0,-2],[0,0,-2],-1))
+        self.assertFalse(global_proof(cuts,[0,0,-2],[0,0,-2],-1,1))
+
+    def test_local_subset_reuse_checks_depth_and_matches_global_proof(self):
+        area=ClearedArea(2,0);cuts=[]
+        for y in np.linspace(-.8,.8,48):
+            a,b=[-4,float(y),-1],[4,float(y),-1]
+            area.add(a,b);cuts.append((a,b))
+        self.assertTrue(area.covers([0,0,-2],[.1,0,-2],-1))
+        self.assertTrue(area.local_subsets)
+        for height in (-1,-1.01):
+            for x in (0,.1,.3):
+                a,b=[x,.05,-2],[x+.15,.05,-2]
+                self.assertEqual(area.covers(a,b,height),global_proof(cuts,a,b,height,2))
+        # A later traversal changes eligibility but never the XY footprint.
+        for a,b in cuts:area.add([*a[:2],-2],[*b[:2],-2])
+        self.assertTrue(area.covers([0,.05,-3],[.1,.05,-3],-2))
 
     def test_staging_retains_an_actionable_resource_budget(self):
         layers=[{'polylines':[{'kind':'cleanup','points':
