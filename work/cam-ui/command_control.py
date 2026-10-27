@@ -14,6 +14,7 @@ UI_ACTIONS = {
     'config.patch', 'placement.set', 'tools.list', 'tool.set', 'tool.save',
     'placement.panel', 'placement.action', 'placement.undo',
     'placement.outline','placement.pick','placement.reference','placement.second_side',
+    'placement.zero',
     'presets.list','presets.save','presets.apply','presets.delete','presets.remember',
     'regions.add', 'regions.remove', 'regions.clear', 'regions.picker', 'regions.draw', 'regions.cancel',
     'operation.tab', 'operations.set', 'drill.inspect', 'cutout.recovery.apply', 'machining.plan',

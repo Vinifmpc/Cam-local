@@ -266,3 +266,20 @@ O zero G54 é a referência das coordenadas do projeto. Selecionar uma borda ape
 `placement.second_side` é explícito e exige as dimensões da fixação: `diameter_mm` é o diâmetro do círculo a proteger no centro da caixa da peça; `height_mm` é a altura da fixação acima do topo da peça após virar. O eixo de giro pode ser `x` ou `y`, sempre 180°. A operação muda para Manual, ativa só Rough, usa `domain_mode:silhouette`, remove as regiões da primeira face e cria o Keep Out central circunscrito. A travessia passa acima do topo declarado da fixação mais a folga configurada. Escolha a referência da segunda face depois do giro; a alteração do zero preserva essa nova fixação.
 
 A seleção do zero não comanda homing nem altera offsets no controlador: o NC contém G54 e usa as coordenadas do projeto. A referência física correspondente deve ser definida na CNC. A simulação não importa o bruto restante da primeira face.
+
+## Referências XY automáticas
+
+```json
+{"action":"placement.zero","anchor":"left"}
+{"action":"placement.zero","anchor":"right"}
+{"action":"placement.zero","anchor":"front"}
+{"action":"placement.zero","anchor":"back"}
+{"action":"placement.zero","anchor":"center"}
+{"action":"placement.reference","point_mm":[84.1,42.1],"snap":true,"magnet_mm":1}
+```
+
+`placement.zero` aplica a referência em um passo, sem ponto de mouse ou confirmação adicional: `left` = X mínimo/Y central, `right` = X máximo/Y central, `front` = X central/Y mínimo, `back` = X central/Y máximo, `center` = ambos centrais. As coordenadas vêm dos limites do STL já posicionado; em peças irregulares a interseção desses planos pode ficar fora da superfície. Z, regiões, bruto, alturas e profundidades físicas são preservados. Repetir a referência ativa não invalida um percurso já calculado. A referência é compatível com desfazer e salva no posicionamento do projeto.
+
+`placement.reference` continua apenas preenchendo o ponto personalizado. Com `magnet_mm > 0`, ele atrai aos pontos laterais alinhados que pertençam ao contorno externo real. O padrão é zero. Na seleção com o mouse, a atração usa 14 pixels da vista; Alt desativa a atração. Centro e pontos da caixa fora do contorno nunca atraem a seleção de borda.
+
+`state detail:true` inclui `placement_ui.reference.automatic_points`; `automatic_anchor` identifica a referência ativa. As linhas tracejadas na vista mostram os eixos centrais. O painel principal prioriza os cinco botões; caixa/cantos e seleção manual ficam em opções recolhidas.

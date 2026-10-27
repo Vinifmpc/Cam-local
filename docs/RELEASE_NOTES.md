@@ -1,5 +1,6 @@
 CAM Local para Windows x64, com janela própria e exportação NC para GRBL.
 
+- Zero XY automático em um clique: Esquerda, Direita, Frente, Trás e Centro. Referências pelos extremos do STL, linhas centrais na vista 3D e atração aos pontos alinhados na seleção manual; Alt permite seleção livre.
 - Zero de trabalho na borda, com seleção visual do contorno e coordenadas manuais para XY/Z independentes. Regiões, bruto e profundidades acompanham a nova referência.
 - A fase das passadas inclinadas acompanha a mudança do zero no sistema de coordenadas do raster, preservando o traçado físico.
 - Preparo da segunda face: giro em X/Y, Rough na silhueta, Cutout desativado e área central protegida conforme diâmetro/altura informados para a fixação.

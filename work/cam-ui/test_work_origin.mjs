@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {placementAction,shiftWorkFrame,nearestOutlinePoint,secondSideState} from './static/placement_controls.js';
+import {placementAction,shiftWorkFrame,nearestOutlinePoint,secondSideState,originReferences,originReferenceId,magneticOutlinePoint,ORIGIN_REFERENCES} from './static/placement_controls.js';
 import {insidePolygon} from './static/stock_model.js';
 import fs from 'node:fs';
 const mesh={bounds_mm:{minimum:[10,20,-6],maximum:[30,40,0],size:[20,20,6]},transform:{rotation:[[1,0,0],[0,1,0],[0,0,1]],translation_mm:[10,20,0]}};
@@ -23,12 +23,29 @@ for(const angle of [30,45,90,135]){
 assert.equal(shift.operations.cutout_bottom_mm,-4);assert.equal(shift.operations.drill_bottom_mm,-2);assert.equal(shift.operations.smart_stock_bottom_mm,-6);assert.equal(shift.operations.plunge_mm_min,150);assert.equal(shift.operations.smart_breakthrough_mm,.2);
 assert.equal(shift.motion,null);assert.equal(shift.project_id,null);assert.deepEqual(shift.stock,{x0:-22,y0:-9,x1:2,y1:15,step:.25});assert.deepEqual(shift.windows,[[-22,-9,2,15]]);
 const outline=[[[0,0],[20,0],[20,20],[0,20]]];
+const refs=originReferences(mesh.bounds_mm);
+for(const [id,point]of Object.entries({left:[10,30],right:[30,30],front:[20,20],back:[20,40],center:[20,30]})){
+ assert.deepEqual(refs.find(r=>r.id===id).point_mm,point);
+ const result=placementAction(placement,mesh,[],{kind:'origin_xy',anchor:ORIGIN_REFERENCES[id].anchor});
+ const delta=result.translation_mm.map((v,i)=>v-mesh.transform.translation_mm[i]);
+ const box={minimum:mesh.bounds_mm.minimum.map((v,i)=>v+delta[i]),maximum:mesh.bounds_mm.maximum.map((v,i)=>v+delta[i])};
+ assert.equal(originReferenceId(box),id);assert.equal(delta[2],0,'An automatic XY reference must preserve Z');
+}
+assert.throws(()=>originReferences({minimum:[0,0,0],maximum:[-1,1,1]}));
+refs[0].anchor[0]=999;assert.deepEqual(ORIGIN_REFERENCES.left.anchor,[0,.5]);
 assert.deepEqual(nearestOutlinePoint([20.2,7],outline).point_mm,[20,7]);assert.deepEqual(nearestOutlinePoint([-1,-1],outline).point_mm,[0,0]);
 assert.equal(nearestOutlinePoint([20,7],outline).distance_mm,0);assert.throws(()=>nearestOutlinePoint([NaN,0],outline));assert.throws(()=>nearestOutlinePoint([1,2],[]));
+const box={minimum:[0,0,-5],maximum:[20,20,0]};
+const magnet=magneticOutlinePoint([20.2,10.1],outline,box,.5);assert.equal(magnet.anchor_id,'right');assert.deepEqual(magnet.point_mm,[20,10]);
+assert.deepEqual(magneticOutlinePoint([20.2,10.1],outline,box,0).point_mm,[20,10.1]);
+assert.deepEqual(magneticOutlinePoint([20.2,7],outline,box,.5).point_mm,[20,7]);
+const triangle=[[[0,0],[20,0],[0,20]]];assert.equal(magneticOutlinePoint([20,10],triangle,box,.5).anchor_id,undefined,'Never magnetize a box midpoint outside the real contour');
+assert.throws(()=>magneticOutlinePoint([1,2],outline,box,-1));
 const circular=[Array.from({length:32},(_,i)=>[10*Math.cos(i*Math.PI/16),10*Math.sin(i*Math.PI/16)])],snap=nearestOutlinePoint([12,0],circular);assert.deepEqual(snap.point_mm,[10,0]);
 const second=secondSideState({...scene,operations:{...operations,machining_mode:'smart',cutout_enabled:true,drill_enabled:true}},{diameter_mm:6,height_mm:5});
 assert.equal(second.operations.machining_mode,'manual');assert.equal(second.operations.roughing_enabled,true);assert.equal(second.operations.cutout_enabled,false);assert.equal(second.operations.drill_enabled,false);assert.equal(second.settings.domain_mode,'silhouette');assert.equal(second.settings.obstacle_top_mm,5);
 assert.equal(second.settings.exclusions_mm.length,1);assert.ok(insidePolygon(20,30,second.settings.exclusions_mm[0]));assert.ok(!insidePolygon(30,40,second.settings.exclusions_mm[0]));assert.equal(second.operations.plunge_mm_min,150);
 for(const fixture of [undefined,{diameter_mm:0,height_mm:2},{diameter_mm:6,height_mm:-1}])assert.throws(()=>secondSideState(scene,fixture));
 const html=fs.readFileSync(new URL('./static/index.html',import.meta.url),'utf8');for(const id of ['pickOriginEdge','originPointX','originPointY','originPointZ','applyOriginXY','applyOriginZ','prepareSecondSide','secondSideDiameter','secondSideHeight','domainMode'])assert.equal([...html.matchAll(new RegExp(`id="${id}"`,'g'))].length,1);
+assert.equal([...html.matchAll(/data-origin-anchor=/g)].length,5);assert.match(html,/<details id="originManual"/);assert.match(html,/<details id="originBoxAnchors"/);
 console.log('Work zero: exact edge snapping, independent XY/Z, translated fixtures/stock/depths, undo immutability and protected second face passed.');

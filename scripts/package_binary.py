@@ -34,6 +34,8 @@ Use os ícones Girar, Origem e Mover na vista 3D para posicionar a peça. O modo
 
 Em Zero, selecione a borda da peça ou informe coordenadas para definir X0/Y0; o Z é independente. Em Girar, o preparo de segunda face vira a peça e deixa apenas Rough, protegendo a fixação central com o diâmetro e a altura informados. Use o mesmo zero G54 na CNC.
 
+Para alinhar sem clicar no contorno, use os botões Esquerda, Direita, Frente, Trás ou Centro no painel Zero. Eles combinam os extremos e o eixo central da peça, mantendo Z e regiões. A seleção manual também atrai para pontos alinhados; Alt libera o ponto.
+
 Presets de usinagem salvam ferramenta, avanços, plunge, RPM e ajustes de corte. Os últimos valores também são restaurados automaticamente ao reabrir. Profundidades, posicionamento e regiões continuam específicos da peça.
 
 Comandos estão em COMANDOS.md. O código original é MIT; bibliotecas mantêm suas próprias licenças. Fontes de terceiros incluídos ficam em sources/. O código do CAM Local acompanha a publicação no GitHub e permite reconstruir o EXE após modificar as bibliotecas.

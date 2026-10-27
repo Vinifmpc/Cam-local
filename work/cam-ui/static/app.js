@@ -12,7 +12,7 @@ import {createRegionPicker} from './region_picker.js';
 import {getCutoutRecovery} from './cutout_feedback.js';
 import {effectiveMachiningOptions,validateSmartOperationPatch,smartPlanText,smartEntryHint,smartPolicyText} from './smart_mode.js';
 import {createAutomaticRegionOverlay,smartPlanForState} from './automatic_regions.js';
-import {placementAction,placementOrigin,samePlacement,nearestOutlinePoint,shiftWorkFrame,secondSideState} from './placement_controls.js';
+import {placementAction,placementOrigin,samePlacement,nearestOutlinePoint,shiftWorkFrame,secondSideState,ORIGIN_REFERENCES,originReferences,originReferenceId,magneticOutlinePoint} from './placement_controls.js';
 import {machiningProfile,profilePatch} from './machining_presets.js';
 const $=id=>document.getElementById(id),fmt=(v,d=2)=>Number(v).toLocaleString('pt-BR',{maximumFractionDigits:d});
 const flip=[[1,0,0],[0,-1,0],[0,0,-1]];
@@ -29,7 +29,7 @@ let depthColoring=true;
 let smartPlanPreview=null,smartPlanPending=false,manualOperationState=null,manualCutoutPreferences=null;
 let automaticRegionsSource=null,automaticRegionsZ=null;
 let placementPanelTab=null,placementUiBusy=false,placementUndo=null;
-let originPicking=false,originOutline=null,originReference=null,originRequest=0;
+let originPicking=false,originOutline=null,originReference=null,originReferenceAnchor=null,originRequest=0,originAlignmentKey='';
 try{depthColoring=localStorage.getItem('cam-depth-colors')!=='false';}catch{}
 let stockGeneration=0,stockBusy=false,stockReady=false,stockWanted=0,stockApplied=-1,stockLastSent=0,toastTimer;
 let stockSampleSnapshot=null;
@@ -170,6 +170,7 @@ const placementBox=new THREE.Box3Helper(new THREE.Box3(),0x80aacb);
 placementBox.material.transparent=true;placementBox.material.opacity=.55;placementBox.material.depthTest=false;placementBox.visible=false;
 scene.add(placementGizmo,placementBox);
 const originPreview=new THREE.Group(),originEdges=new THREE.Group();scene.add(originPreview,originEdges);
+const originAlignment=new THREE.Group();scene.add(originAlignment);
 let grid=null,stockMesh=null,stockWire=null,span=100;
 function resize(){const r=$('canvasHost').getBoundingClientRect();renderer.setSize(r.width,r.height,false);const a=r.width/r.height;camera.left=-span*a/2;camera.right=span*a/2;camera.top=span/2;camera.bottom=-span/2;camera.updateProjectionMatrix();}
 new ResizeObserver(resize).observe($('canvasHost'));
@@ -573,11 +574,16 @@ $('stlFile').onchange=async()=>{
 function placementUiState(detail=false){
  const result={panel:placementPanelTab,enabled:!!data&&!busy&&!exportBusy&&!placementUiBusy,
   undo_available:!!placementUndo&&placementUndo.revision===revision,origin:placementOrigin(data?.mesh.bounds_mm),
-  reference:{picking:originPicking,picker_hides_panel:originPicking&&$('placementPanel').hidden,point_mm:originReference,contours:originOutline?.polygons_mm.length||0}};
+  reference:{picking:originPicking,picker_hides_panel:originPicking&&$('placementPanel').hidden,point_mm:originReference,
+   anchor:originReferenceAnchor,automatic_anchor:originReferenceId(data?.mesh.bounds_mm),contours:originOutline?.polygons_mm.length||0}};
  if(detail){
   const frame=$('viewport').getBoundingClientRect(),dock=$('placementDock').getBoundingClientRect();
+  const body=$('placementPanel').querySelector('.placement-body'),area=body.getBoundingClientRect();
   result.layout={in_viewport:!!data&&dock.left>=frame.left&&dock.right<=frame.right&&dock.top>=frame.top&&dock.bottom<=frame.bottom,
-   panel_scrolls:$('placementPanel').scrollHeight>$('placementPanel').clientHeight};
+   panel_scrolls:body.scrollHeight>body.clientHeight,
+   body_height:body.clientHeight,reference_buttons_bottom:Math.max(0,...[...$('placementDock').querySelectorAll('[data-origin-anchor]')].map(button=>button.getBoundingClientRect().bottom-area.top)),
+   reference_buttons_visible:placementPanelTab==='origin'&&!originPicking&&[...$('placementDock').querySelectorAll('[data-origin-anchor]')].every(button=>{const r=button.getBoundingClientRect();return r.top>=area.top&&r.bottom<=area.bottom;})};
+  result.reference.automatic_points=data?originReferences(bounds()):[];
  }
  return result;
 }
@@ -594,13 +600,29 @@ function syncPlacementUi(){
  $('placementTitle').textContent={rotate:'Girar / segunda face',origin:'Zero da peça · G54',move:'Mover a peça'}[placementPanelTab]||'Posicionar peça';
  for(const button of $('placementDock').querySelectorAll('[data-placement-xy]'))button.setAttribute('aria-pressed',String(!!state.origin.xy&&button.dataset.placementXy===state.origin.xy.join(',')));
  for(const button of $('placementDock').querySelectorAll('[data-placement-z]'))button.setAttribute('aria-pressed',String(button.dataset.placementZ===state.origin.z));
+ for(const button of $('placementDock').querySelectorAll('[data-origin-anchor]'))button.setAttribute('aria-pressed',String(button.dataset.originAnchor===state.reference.automatic_anchor));
  const xy=$('placementDock').querySelector('[data-placement-xy][aria-pressed="true"]');
- $('placementOriginLabel').textContent=`XY: ${xy?.title||'personalizada'} · Z: ${{top:'topo',center:'meio',bottom:'base'}[state.origin.z]||'personalizada'}`;
+ const reference=ORIGIN_REFERENCES[state.reference.automatic_anchor];
+ $('placementOriginLabel').textContent=`XY: ${reference?reference.label+' · '+reference.description:xy?.title||'personalizada'} · Z: ${{top:'topo',center:'meio',bottom:'base'}[state.origin.z]||'personalizada'}`;
  $('placementDimensions').textContent=data?bounds().size.map(v=>fmt(v,2)).join(' × ')+' mm':'';
  placementGizmo.visible=!!data&&mode==='paths';placementBox.visible=open;
  if(data){
   placementGizmo.scale.setScalar(Math.max(2,Math.min(15,Math.max(...bounds().size)*.12)));
   placementBox.box.min.fromArray(bounds().minimum);placementBox.box.max.fromArray(bounds().maximum);
+ }
+ syncOriginAlignment();
+}
+function syncOriginAlignment(){
+ originAlignment.visible=!!data&&mode==='paths'&&placementPanelTab==='origin';
+ if(!originAlignment.visible)return;
+ const b=bounds(),key=JSON.stringify(b);if(key===originAlignmentKey)return;originAlignmentKey=key;clearGroup(originAlignment);
+ const x=(b.minimum[0]+b.maximum[0])/2,y=(b.minimum[1]+b.maximum[1])/2,z=b.maximum[2]+.12;
+ const spacing=Math.max(.1,Math.max(...b.size)*.025);
+ for(const [points,color]of [
+  [[[b.minimum[0],y,z],[b.maximum[0],y,z]],0xbd6470],
+  [[[x,b.minimum[1],z],[x,b.maximum[1],z]],0x3b927e]]){
+  const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(points.map(p=>new THREE.Vector3(...p))),new THREE.LineDashedMaterial({color,dashSize:spacing,gapSize:spacing*.65,depthTest:false,depthWrite:false,transparent:true,opacity:.8}));
+  line.computeLineDistances();line.renderOrder=1001;originAlignment.add(line);
  }
 }
 function setPlacementPanel(panel){
@@ -659,7 +681,7 @@ function cancelOriginPick(){
  if(wasPicking)syncPlacementUi();
 }
 function resetOriginReference(){
- cancelOriginPick();originOutline=null;originReference=null;clearGroup(originPreview);
+ cancelOriginPick();originOutline=null;originReference=null;originReferenceAnchor=null;clearGroup(originPreview);
  $('originPointX').value=$('originPointY').value=$('originPointZ').value='0';
 }
 async function ensureOriginOutline(){
@@ -679,15 +701,25 @@ function previewOriginPoint(point){
  }
  originPreview.position.set(point[0],point[1],bounds().maximum[2]+.1);originPreview.visible=true;
 }
-function selectOriginPoint(point){
+function selectOriginPoint(point,anchor=null){
  if(!Array.isArray(point)||point.length!==2||!point.every(Number.isFinite))throw Error('Informe X e Y finitos em mm.');
- originReference=[...point];$('originPointX').value=point[0];$('originPointY').value=point[1];
- previewOriginPoint(point);cancelOriginPick();syncPlacementUi();return {point_mm:[...point]};
+ originReference=[...point];originReferenceAnchor=anchor;$('originPointX').value=point[0];$('originPointY').value=point[1];
+ $('originManual').open=true;
+ previewOriginPoint(point);cancelOriginPick();syncPlacementUi();return {point_mm:[...point],anchor};
 }
-async function referenceOrigin(point,snap=true){
+async function referenceOrigin(point,snap=true,magnet=0){
  commandIdle();if(!data)throw Error('Abra um STL primeiro.');
- const hit=snap?nearestOutlinePoint(point,(await ensureOriginOutline()).polygons_mm):{point_mm:point};
- return {...selectOriginPoint(hit.point_mm),...(snap?{distance_mm:hit.distance_mm}:{} )};
+ const hit=snap?magneticOutlinePoint(point,(await ensureOriginOutline()).polygons_mm,bounds(),magnet):{point_mm:point};
+ return {...selectOriginPoint(hit.point_mm,hit.anchor_id??null),...(snap?{distance_mm:hit.distance_mm}:{} )};
+}
+async function setAutomaticOrigin(anchor){
+ commandIdle();if(!data)throw Error('Abra um STL primeiro.');
+ if(!Object.hasOwn(ORIGIN_REFERENCES,anchor))throw Error('Escolha left, right, front, back ou center.');
+ cancelOriginPick();await runPlacementAction({kind:'origin_xy',anchor:ORIGIN_REFERENCES[anchor].anchor});
+ resetOriginReference();setPlacementPanel('origin');
+ $('originManual').open=false;$('originBoxAnchors').open=false;
+ toast('Zero XY: '+ORIGIN_REFERENCES[anchor].label+' · '+ORIGIN_REFERENCES[anchor].description+'. Z preservado.');
+ return commandState();
 }
 async function beginOriginPick(){
  setPlacementPanel('origin');cancelDraw();const ticket=++originRequest;
@@ -704,20 +736,21 @@ async function beginOriginPick(){
 }
 function originHit(event){
  const point=worldPoint(event);if(!point||!originOutline)return null;
- const hit=nearestOutlinePoint([point.x,point.y],originOutline.polygons_mm);
+ const hit=magneticOutlinePoint([point.x,point.y],originOutline.polygons_mm,bounds(),event.altKey?0:unitsPerPixel()*14);
  return hit.distance_mm<=unitsPerPixel()*14?hit:null;
 }
 $('pickOriginEdge').onclick=()=>{if(originPicking)cancelOriginPick();else beginOriginPick().catch(error=>toast(error.message,true));};
+for(const button of $('placementDock').querySelectorAll('[data-origin-anchor]'))button.onclick=()=>setAutomaticOrigin(button.dataset.originAnchor).catch(error=>toast(error.message,true));
 $('applyOriginXY').onclick=()=>{try{placementClick({kind:'origin_point',axes:'xy',point_mm:[number('originPointX'),number('originPointY'),0]});}catch(error){toast(error.message,true);}};
 $('applyOriginZ').onclick=()=>{try{placementClick({kind:'origin_point',axes:'z',point_mm:[0,0,number('originPointZ')]});}catch(error){toast(error.message,true);}};
 $('prepareSecondSide').onclick=()=>{try{prepareSecondSide($('secondSideAxis').value,{diameter_mm:number('secondSideDiameter'),height_mm:number('secondSideHeight')}).catch(error=>toast(error.message,true));}catch(error){toast(error.message,true);}};
 renderer.domElement.addEventListener('pointermove',event=>{
  if(!originPicking)return;const hit=originHit(event);
- if(hit)previewOriginPoint(hit.point_mm);else originPreview.visible=false;
+ if(hit){previewOriginPoint(hit.point_mm);$('originPickHelp').textContent=hit.anchor_id?ORIGIN_REFERENCES[hit.anchor_id].label+' exata · clique para selecionar · Alt libera o ponto':'Borda livre · aproxime de um eixo para alinhar · Alt libera · Esc cancela';}else originPreview.visible=false;
 });
 renderer.domElement.addEventListener('pointerdown',event=>{
  if(!originPicking||event.button!==0)return;event.preventDefault();
- const hit=originHit(event);if(hit)selectOriginPoint(hit.point_mm);else toast('Clique próximo da borda azul para escolher o zero.');
+ const hit=originHit(event);if(hit)selectOriginPoint(hit.point_mm,hit.anchor_id??null);else toast('Clique próximo da borda azul para escolher o zero.');
 });
 renderer.domElement.addEventListener('pointercancel',cancelOriginPick);
 function undoPlacement(){
@@ -1100,8 +1133,9 @@ async function executeCommand(command){
  }
  if(action==='placement.reference'){
   if(command.snap!==undefined&&typeof command.snap!=='boolean')throw Error('snap deve ser booleano.');
-  return referenceOrigin(commandVector(command.point_mm,'point_mm',2),command.snap??true);
+  return referenceOrigin(commandVector(command.point_mm,'point_mm',2),command.snap??true,command.magnet_mm===undefined?0:commandNumber(command.magnet_mm,'magnet_mm',0));
  }
+ if(action==='placement.zero')return setAutomaticOrigin(command.anchor);
  if(action==='placement.second_side')return prepareSecondSide(command.axis??'x',command.fixture);
  if(action==='placement.action'){await runPlacementAction(command);return commandState();}
  if(action==='placement.undo'){undoPlacement();return commandState();}

@@ -40,18 +40,18 @@
     },
     {
       "path": "docs/ARQUITETURA.md",
-      "bytes": 6344,
-      "sha256": "9be63eb0f3e5d9f60d26307ca1ab3fe8e485b9eed4e46fe5c9ae99143b5556d1"
+      "bytes": 6864,
+      "sha256": "201ce94dcd4ad04cf1a7d640edc8e7d3a6f608f1c02608a71ac736270e7a4576"
     },
     {
       "path": "docs/COMANDOS.md",
-      "bytes": 18724,
-      "sha256": "d6a6184bcc2d05f95f8bcef5fd0e6447ae0cc64d664a761f37e57351ecf2a4bd"
+      "bytes": 20330,
+      "sha256": "2a39c83c70714167980ee15729807d6014c2eeb82b4a93690508e0fa96c757a2"
     },
     {
       "path": "docs/RELEASE_NOTES.md",
-      "bytes": 2246,
-      "sha256": "9b5fc87258db02786d188bab0e52765930747de8976f2891f86b345a207a9b79"
+      "bytes": 2472,
+      "sha256": "1b12400209c893bd3cf4b79b6597e684fabc6c893bf3b260be5a261f2a4f560c"
     },
     {
       "path": "docs/UPLOAD.md",
@@ -65,8 +65,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 4663,
-      "sha256": "d382e932d71422b9513d114c45e6d0e4a3d11a0612bb324dae05c36a2553477e"
+      "bytes": 5077,
+      "sha256": "deb63f3aceb9aba77f79f7a040bf6da6d56e48c854825cc7ce74012c4bf92ec6"
     },
     {
       "path": "requirements-dev.txt",
@@ -90,8 +90,8 @@
     },
     {
       "path": "scripts/check_native.py",
-      "bytes": 7269,
-      "sha256": "a0d04754da31d29e510ce3159ad506cc5d48d35bb102de3de2ed87ea5ed43fe8"
+      "bytes": 7308,
+      "sha256": "556d31af2cd34e6747c5a1999f4fb0dba78a12ae84cc93834491fa2379b1b1f3"
     },
     {
       "path": "scripts/collect_licenses.py",
@@ -100,8 +100,8 @@
     },
     {
       "path": "scripts/package_binary.py",
-      "bytes": 3659,
-      "sha256": "d5fe56dc18e86c49eba4c8b51103b65b586fd1f69888e84c18ad1c17ed3144aa"
+      "bytes": 3923,
+      "sha256": "64bc733af8963b81a8847663d849e99fb1fc8779d2ab7ca6160dd2eb58d115c6"
     },
     {
       "path": "scripts/prepare_github.py",
@@ -150,13 +150,13 @@
     },
     {
       "path": "work/cam-ui/command_client.py",
-      "bytes": 17270,
-      "sha256": "e2d80892a289cfda1f9b472b9855f04e4a3c501dd5c7c0c9042ce8ecc6369586"
+      "bytes": 17533,
+      "sha256": "c9af14089e58095091768fbbdf1e789e1d3cf49f583e9bf09b4a19c64d87da05"
     },
     {
       "path": "work/cam-ui/command_control.py",
-      "bytes": 5440,
-      "sha256": "1fbc730f2d1b4ff3ccc98e2b64a0b5d02d47941239e3393cc8b92d152d3eaec1"
+      "bytes": 5462,
+      "sha256": "bff3d28fd0d8edc0aed02ac973abde5c53fe4d12cd9e88b95a428419ceb06d56"
     },
     {
       "path": "work/cam-ui/desktop.ico",
@@ -230,8 +230,8 @@
     },
     {
       "path": "work/cam-ui/static/app.js",
-      "bytes": 107346,
-      "sha256": "47225ec51c4c7d705e9da9f9daaeb98e18dad026ef19de546ab213c18dfdccd6"
+      "bytes": 110795,
+      "sha256": "b1fb762a23c876d0979799c97dcbae8e47d0eed2316f794ca97fa183a3a5e0b5"
     },
     {
       "path": "work/cam-ui/static/automatic_regions.js",
@@ -260,8 +260,8 @@
     },
     {
       "path": "work/cam-ui/static/index.html",
-      "bytes": 37547,
-      "sha256": "18604f071d970713ec4aa55893fe055ab431f730576c7129625a17afbef93be3"
+      "bytes": 38958,
+      "sha256": "2a092747307e23f7d3da1f0b35871187ff130a35993027dcc728785d34609e24"
     },
     {
       "path": "work/cam-ui/static/machining_presets.js",
@@ -275,13 +275,13 @@
     },
     {
       "path": "work/cam-ui/static/placement.css",
-      "bytes": 8046,
-      "sha256": "85da745ad90eccc230a1f4065457faf72473652c18105a93e80792872287a6a5"
+      "bytes": 9729,
+      "sha256": "e904179395c682680575da3761b43207f1ab34f1c8547e5d4d3a1d3476618e87"
     },
     {
       "path": "work/cam-ui/static/placement_controls.js",
-      "bytes": 7373,
-      "sha256": "26fe21f237b7d5a6826e8ad1dd65f5e3ff1a61d68900820029d964bc7ed888be"
+      "bytes": 9326,
+      "sha256": "400860d89dc815334bd9356a0636468f7c910d30dd4ccfd3e0b6f5660fcb1830"
     },
     {
       "path": "work/cam-ui/static/playback.js",
@@ -475,8 +475,8 @@
     },
     {
       "path": "work/cam-ui/test_work_origin.mjs",
-      "bytes": 4719,
-      "sha256": "5b17d1d6ab76132b94681ea8799cbe6bd5e9ed55bc7b4cac17cc48e1885631a6"
+      "bytes": 6350,
+      "sha256": "df845df69312b79e6bdd3b0c9132b962f974baf59aad6ded5b345429f962c017"
     },
     {
       "path": "work/geometry-runtime/package-lock.json",

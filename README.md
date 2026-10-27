@@ -10,6 +10,7 @@ O aplicativo começa com a área de trabalho vazia. **Abrir STL** importa uma pe
 - Modo inteligente: Rough nas formas 3D, rebaixos e bolsões; recortes internos vantajosos preservam o miolo como sobra, antes do perfil externo.
 - Posicionamento na própria vista 3D: ícones para girar, origem XY em nove pontos, origem Z, deslocamento em mm e desfazer posição.
 - Zero de trabalho G54 na borda: seleção do contorno no modelo ou coordenadas manuais, com XY/Z independentes e preservação das regiões ao mudar a referência.
+- Zero XY em um clique: Esquerda, Direita, Frente, Trás ou Centro, pelos limites do STL e pelo eixo central. Seleção manual com atração aos pontos alinhados.
 - Segunda face para peça já recortada: giro em X/Y, apenas Rough na silhueta e proteção circular da fixação central com altura de travessia declarada.
 - Drill com comparação entre fresa e furo; hélice opcional para furos maiores.
 - Lista de operações com ativação e ordenação no modo manual.
@@ -37,7 +38,7 @@ O resultado fica em `dist/CAM-local-Windows/`. Dependências são instaladas pel
 
 ## Usar
 
-1. Abra um STL e use **Girar**, **Zero** e **Mover** na vista 3D. Em **Zero → Selecionar borda no modelo**, escolha a referência e aplique **Definir X0 / Y0 neste ponto**; o Z é independente. As opções completas de unidade continuam disponíveis no painel Mover.
+1. Abra um STL e use **Girar**, **Zero** e **Mover** na vista 3D. Em **Zero**, clique em **Esquerda**, **Direita**, **Frente**, **Trás** ou **Centro** para definir XY automaticamente; o Z é independente. As referências usam os extremos exatos e o centro da caixa da peça: Esquerda combina X mínimo com Y central, por exemplo. A seleção de outro ponto e a digitação ficam nas opções manuais; Alt libera a atração aos pontos alinhados. As opções completas de unidade continuam disponíveis no painel Mover.
 2. Confira diâmetro, comprimento de corte, avanços e RPM da ferramenta. Em **Presets de usinagem**, escolha um preset ou use **＋ Salvar** para cadastrar seus ajustes. **Atualizar preset** substitui o selecionado; as edições comuns ficam nos últimos ajustes automáticos.
 3. Escolha as operações. No modo inteligente, os detalhes ficam no Rough; internos vantajosos são recortados antes de soltar o exterior.
 4. Calcule e simule os percursos; depois exporte o NC.

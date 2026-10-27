@@ -11,6 +11,25 @@ const add=(a,b)=>a.map((v,i)=>v+b[i]);
 const subtract=(a,b)=>a.map((v,i)=>v-b[i]);
 const anchor=(low,high,fraction)=>low+(high-low)*fraction;
 const nearZero=value=>Math.abs(value)<1e-6;
+export const ORIGIN_REFERENCES={
+ left:{label:'Esquerda',anchor:[0,.5],description:'X mínimo · Y central'},
+ right:{label:'Direita',anchor:[1,.5],description:'X máximo · Y central'},
+ front:{label:'Frente',anchor:[.5,0],description:'X central · Y mínimo'},
+ back:{label:'Trás',anchor:[.5,1],description:'X central · Y máximo'},
+ center:{label:'Centro',anchor:[.5,.5],description:'X central · Y central'}
+};
+export function originReferences(bounds){
+ if(!bounds||!Array.isArray(bounds.minimum)||!Array.isArray(bounds.maximum)
+   ||bounds.minimum.length!==3||bounds.maximum.length!==3
+   ||![...bounds.minimum,...bounds.maximum].every(Number.isFinite)
+   ||bounds.minimum.some((v,i)=>v>bounds.maximum[i]))throw Error('Limites da peça indisponíveis.');
+ return Object.entries(ORIGIN_REFERENCES).map(([id,r])=>({id,...r,anchor:[...r.anchor],
+  point_mm:r.anchor.map((f,i)=>anchor(bounds.minimum[i],bounds.maximum[i],f))}));
+}
+export function originReferenceId(bounds){
+ if(!bounds)return null;
+ return originReferences(bounds).find(r=>r.point_mm.every(nearZero))?.id??null;
+}
 
 export function placementOrigin(bounds){
  if(!bounds)return {xy:null,z:null};
@@ -79,6 +98,20 @@ export function nearestOutlinePoint(point,loops){
  }
  if(!best)throw Error('O modelo não tem borda projetada disponível. Use as coordenadas ou os nove pontos de referência.');
  return best;
+}
+
+export function magneticOutlinePoint(point,loops,bounds,distance){
+ if(!Number.isFinite(distance)||distance<0)throw Error('Distância de atração inválida.');
+ const nearest=nearestOutlinePoint(point,loops);
+ if(distance===0)return nearest;
+ // Only magnetize box references that actually lie on the outer contour.
+ // A triangle/L-shaped piece may have a box midpoint outside its material.
+ const tolerance=1e-5;
+ const candidates=originReferences(bounds).filter(r=>r.id!=='center').map(r=>({...r,
+  distance_mm:Math.hypot(point[0]-r.point_mm[0],point[1]-r.point_mm[1])}))
+  .filter(r=>r.distance_mm<=distance&&nearestOutlinePoint(r.point_mm,loops).distance_mm<=tolerance)
+  .sort((a,b)=>a.distance_mm-b.distance_mm);
+ return candidates.length?{...nearest,point_mm:candidates[0].point_mm,distance_mm:candidates[0].distance_mm,anchor_id:candidates[0].id}:nearest;
 }
 
 export function shiftWorkFrame(scene,inspected,delta){

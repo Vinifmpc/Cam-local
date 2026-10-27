@@ -59,6 +59,14 @@
 .placement-foot p{font-size:9px;line-height:1.5;color:#8293a1;margin:6px 0 0}
 .placement-toolbar button:disabled,.placement-body button:disabled{cursor:not-allowed}
 .origin-custom,.second-side{border-top:1px solid #dce6ef;margin-top:12px;padding-top:11px}
+.origin-compass{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(3,32px);position:relative;isolation:isolate;gap:3px}
+.origin-compass-shape{position:absolute;inset:20px 12px;border:1px dashed #abc5d9;background:#edf5fb;border-radius:50%;z-index:-1}
+.origin-compass button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:2px 1px;border-radius:8px;border:1px solid #cddde9;background:#ffffffed;color:#466780;min-width:0;font-size:10px}
+.origin-compass button>span{font-size:14px;line-height:14px;color:#2f7aad}.origin-compass strong{font-size:9px;font-weight:600}.origin-compass small{font-size:8px;color:#768da2}
+.origin-compass button:hover{background:#e7f2fc;border-color:#78a8ce}.origin-compass button[aria-pressed=true]{background:#d9edff;border-color:#4e90c4;color:#135f9e;box-shadow:0 0 0 1px #8cb8db}
+.origin-compass [data-origin-anchor=back]{grid-area:1/2}.origin-compass [data-origin-anchor=left]{grid-area:2/1}.origin-compass [data-origin-anchor=center]{grid-area:2/2}.origin-compass [data-origin-anchor=right]{grid-area:2/3}.origin-compass [data-origin-anchor=front]{grid-area:3/2}
+.origin-box-anchors,.origin-manual{border-top:1px solid #e1eaf2;padding-top:9px;margin-top:9px}.origin-box-anchors summary,.origin-manual summary{font-size:10px;color:#607f99;cursor:pointer}
+.origin-box-anchors>.placement-section-label{margin-top:10px}.origin-box-anchors .placement-anchor-grid{margin:0 auto}.origin-manual .origin-custom{border-top:0;margin-top:7px;padding-top:0}
 .origin-inputs{grid-template-columns:repeat(2,minmax(0,1fr));margin:9px 0}
 .origin-inputs label>span{font-size:10px;display:block}.origin-inputs em{float:right}
 .origin-z-input{display:flex;align-items:flex-end;gap:8px;margin:12px 0 9px}
@@ -70,3 +78,5 @@
 .second-side .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:9px}.second-side label{font-size:10px;min-width:0;margin:0}.second-side input{width:100%;min-width:0;margin-top:5px;font-size:11px}
 @media(max-width:1100px){.placement-dock{width:268px}.placement-toolbar>button{padding:8px}.placement-origin-layout{gap:10px}}
 @media(max-height:740px){.placement-heading{padding:9px 13px 8px}.placement-dock{top:102px;max-height:calc(100% - 156px)}.placement-foot{margin-top:8px}.placement-rotations{gap:5px}.placement-axis{padding:5px 3px}}
+
+.origin-compass small{display:none}.origin-compass button>span{font-size:12px;line-height:12px}.origin-auto-hint{margin-top:9px}

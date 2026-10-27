@@ -77,11 +77,12 @@ def main():
             and restored['simulation']['moves']==0)
         run('regions.add',kind='keepout',shape='rectangle',min=[1,1],max=[2,2])
         reference=run('placement.reference',point_mm=[20.3,7])
-        shifted=run('placement.action',kind='origin_point',axes='xy',point_mm=[20,7,0])
+        shifted=run('placement.zero',anchor='left')
         detail=run('state',detail=True)
         check('Edge work zero preserves fixture coordinates and part dimensions',reference['point_mm']==[20,7]
-            and shifted['model']['bounds_mm']['minimum']==[-20,-7,-5]
-            and detail['settings']['exclusions_mm'][0][0]==[-19,-6])
+            and shifted['model']['bounds_mm']['minimum']==[0,-10,-5]
+            and detail['settings']['exclusions_mm'][0][0]==[1,-9]
+            and detail['placement_ui']['layout']['reference_buttons_visible'])
         run('placement.undo')
         opposite=run('placement.second_side',axis='y',fixture={'diameter_mm':4,'height_mm':3})
         check('Opposite face uses Rough only with a protected central fixture',not opposite['operations']['cutout_enabled']
