@@ -14,6 +14,7 @@ O aplicativo começa com a área de trabalho vazia. **Abrir STL** importa uma pe
 - Rampas, ligações em áreas removidas e validação independente antes da exportação.
 - Simulação de remoção em grade e reconstrução de superfície, com reprodução pelo feedrate e velocidades 2×, 3× e outras.
 - Controle da aplicação por comandos JSON, sem automação de mouse.
+- Presets nomeados de ferramenta, avanços, plunge, RPM e ajustes de corte; últimos valores restaurados automaticamente ao reabrir, com a área de trabalho vazia.
 
 ## Rodar pelo código
 
@@ -35,7 +36,7 @@ O resultado fica em `dist/CAM-local-Windows/`. Dependências são instaladas pel
 ## Usar
 
 1. Abra um STL e use **Girar**, **Origem** e **Mover** na vista 3D. As opções completas de unidade continuam disponíveis no painel Mover.
-2. Confira diâmetro, comprimento de corte, avanços e RPM da ferramenta.
+2. Confira diâmetro, comprimento de corte, avanços e RPM da ferramenta. Em **Presets de usinagem**, escolha um preset ou use **＋ Salvar** para cadastrar seus ajustes. **Atualizar preset** substitui o selecionado; as edições comuns ficam nos últimos ajustes automáticos.
 3. Escolha as operações. No modo inteligente, os detalhes ficam no Rough; internos vantajosos são recortados antes de soltar o exterior.
 4. Calcule e simule os percursos; depois exporte o NC.
 

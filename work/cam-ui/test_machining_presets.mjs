@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {machiningProfile,profilePatch} from './static/machining_presets.js';
+const tool={id:'a',diameter_mm:3.175,cutting_length_mm:22},settings={stepdown_mm:.7,stepover_mm:1.27,stock_top_mm:10,bottom_mm:-7,boundaries_mm:[[[1,2]]],exclusions_mm:[]},operations={roughing_feed_mm_min:700,plunge_mm_min:150,drill_center_cutting:true,cutout_bottom_mm:-7,smart_stock_bottom_mm:-7};
+const p=machiningProfile(tool,settings,operations);
+assert.equal(p.stepover_percent,40);assert.equal(p.operations.plunge_mm_min,150);assert.ok(!('bottom_mm' in p.settings));assert.ok(!('boundaries_mm' in p.settings));assert.ok(!('smart_stock_bottom_mm' in p.operations));
+p.tool.diameter_mm=6;p.stepover_percent=30;
+const target={...settings,stock_top_mm:0,bottom_mm:-25},targetOps={...operations,cutout_bottom_mm:-25,drill_bottom_mm:-25,smart_stock_bottom_mm:-30};
+const result=profilePatch(p,target,targetOps);
+assert.ok(Math.abs(result.settings.stepover_mm-1.8)<1e-10);assert.equal(result.settings.stock_top_mm,0);assert.equal(result.settings.bottom_mm,-25);assert.deepEqual(result.settings.boundaries_mm,settings.boundaries_mm);
+assert.equal(result.operations.cutout_bottom_mm,-25);assert.equal(result.operations.smart_stock_bottom_mm,-30);assert.equal(result.operations.drill_bottom_mm,-25);
+result.tool.id='other';assert.equal(p.tool.id,'a');assert.equal(tool.diameter_mm,3.175);
+assert.throws(()=>profilePatch({...p,stepover_percent:101},target,targetOps));
+const html=fs.readFileSync(new URL('./static/index.html',import.meta.url),'utf8');
+for(const id of ['presetSelect','presetStatus','presetForm','presetName','drillCenterCutting'])assert.equal([...html.matchAll(new RegExp(`id="${id}"`,'g'))].length,1);
+assert.ok(html.indexOf('id="drillCenterCutting"')<html.indexOf('id="roughPanel"'));
+console.log('machining presets: model-independent settings and shared entry controls passed');

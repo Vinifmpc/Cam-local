@@ -13,7 +13,7 @@ export function validateSmartOperationPatch(command={}){
   throw Error('No modo inteligente, Rough e Cutout ficam ativos e o recorte é o último. Selecione Manual para mudar a ordem ou desativá-los.');
 }
 export function smartEntryHint(centerCutting){
- return centerCutting?'Corte pelo centro confirmado: quando a rampa não couber, o Rough inteligente pode usar mergulho de até um Stepdown, com o Plunge rate.':'Mergulho central desativado. Se a fresa cortar pelo centro, confira a confirmação na aba Drill para permitir essa alternativa à rampa no Rough inteligente.';
+ return centerCutting?'Corte pelo centro confirmado: quando a rampa não couber, o Rough inteligente pode usar mergulho de até um Stepdown, com o Plunge rate.':'Mergulho central desativado. A confirmação “Minha fresa corta pelo centro”, acima dos parâmetros das operações, permite essa alternativa à rampa no Rough inteligente.';
 }
 export function smartPolicyText(plan){
  const mode=plan?.exterior_strategy?.mode;

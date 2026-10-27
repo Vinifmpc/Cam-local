@@ -229,3 +229,20 @@ abre uma placa com bolsão gerada pelo código, somente quando solicitado.
 Ensaio nativo reproduzível: `.venv/Scripts/python.exe scripts/check_native.py
 --exe "dist/CAM-local-Windows/CAM Local.exe"`. O teste usa perfil isolado,
 importação opcional, cálculo real, exportação, remoção na grade, ZIP e reinício.
+
+## Presets de usinagem
+
+Os últimos ajustes são gravados automaticamente no perfil local e restaurados ao reabrir, sem carregar uma peça. Presets nomeados ficam separados dos últimos ajustes: editar um campo não substitui o preset salvo.
+
+```json
+{"action":"presets.list"}
+{"action":"presets.save","name":"MDF · fresa 3,175 mm"}
+{"action":"presets.apply","id":"ID retornado"}
+{"action":"presets.save","id":"ID retornado","name":"MDF atualizado"}
+{"action":"presets.delete","id":"ID retornado"}
+{"action":"presets.remember"}
+```
+
+O preset inclui o snapshot da ferramenta, feedrates de Rough/Cutout/Drill, plunge, rápido, RPM, stepdown, stepover em porcentagem, rampa e opções das operações. A confirmação de corte pelo centro é salva junto da ferramenta e é desmarcada ao trocar de ferramenta. Ao aplicar em um projeto, o posicionamento, as regiões, os limites do bruto e as profundidades finais da peça são preservados.
+
+O arquivo `machining-presets.json` fica ao lado de `ferramentas.json` no perfil (`%LOCALAPPDATA%/CAMLocal` por padrão). Perfis de teste isolados usam seus próprios presets. Atualizações de versões antigas recuperam os ajustes do projeto local mais recente, sem abrir seu STL.

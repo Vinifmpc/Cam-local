@@ -93,6 +93,7 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(status,200);self.assertEqual(wasm[:4],b'\x00asm')
             self.assertEqual(request('GET','/api/bootstrap',headers={'Origin':'https://example.com'})[0],403)
             self.assertEqual(request('POST','/api/save',json.dumps(self.request))[0],403)
+            self.assertEqual(request('POST','/api/presets',json.dumps({'action':'delete','id':'missing'}))[0],403)
             status,body=request('POST','/api/save',json.dumps(self.request),{'X-Cam-Token':self.app.token})
             self.assertEqual(status,200,body)
             self.assertEqual(request('GET','/../../server.py')[0],403)

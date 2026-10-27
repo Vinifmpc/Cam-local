@@ -40,7 +40,7 @@ function fixture(){
   api(path,next){apiCalls.push({path,next:copy(next)});return validate(next);},
   fillFields(){element('cutoutContours').value=context.operations.cutout_contours;},
   displayToolSelect(){renders.push('tools');},makeTool(){renders.push('tool');},renderRegions(){renders.push('regions');},regionList(){renders.push('region-list');},
-  dirty(){context.revision++;context.clearCutoutRecovery();},
+  dirty(){context.revision++;context.clearCutoutRecovery();},rememberMachining:async()=>{},
   selectOperationTab(tab){tabs.push(tab);},
   commandState(){return {operations:copy(context.operations),tool:copy(context.tool),settings:copy(context.settings)};},
   startCalculation(){throw Error('Recovery must never calculate automatically');}});

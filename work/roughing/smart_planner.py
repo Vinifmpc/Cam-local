@@ -277,6 +277,11 @@ def add_preparation_contours(job,triangles,tool,settings,options,report,progress
         layer['polylines'].sort(key=lambda p:0 if p['kind']=='preparation' else 1 if p['kind']=='cleanup' else 2)
         upper=layer['z']
     from depth_staging import stage_paths
+    from short_entries import extend_short_entries
+    job['short_entry_extensions']=extend_short_entries(layers,diameter=tool.diameter_mm,
+        contact_diameter=tool.diameter_mm+2*settings.radial_allowance_mm+settings.sampling_mm,
+        stock_top=settings.stock_top_mm,angle=settings.entry_angle_deg,
+        contains=lambda a,b:edge_in_automatic_domain(a,b,report['automatic_regions'],settings.stock_top_mm))
     stage_paths(layers,diameter=tool.diameter_mm,stock_top=settings.stock_top_mm,
                 stepdown=settings.stepdown_mm,progress=progress)
     job['layers']=layers
@@ -380,6 +385,9 @@ def edge_in_automatic_domain(a,b,automatic,stock_top):
 
 def validate_smart_geometry(job,triangles,tool,settings,options,report,motion=None):
     if report is None:return
+    from short_entries import validate_short_entries
+    validate_short_entries(job['layers'],diameter=tool.diameter_mm,
+        contact_diameter=tool.diameter_mm+2*settings.radial_allowance_mm+settings.sampling_mm)
     from internal_cutouts import plan_internal_cutouts
     internal=plan_internal_cutouts(triangles,tool,settings,options)
     if report.get('internal_cutouts')!=internal:

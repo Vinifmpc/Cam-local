@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {importedMachiningState} from './static/form_state.js';
+import {profilePatch} from './static/machining_presets.js';
 
 const source=fs.readFileSync(new URL('./static/app.js',import.meta.url),'utf8');
 const html=fs.readFileSync(new URL('./static/index.html',import.meta.url),'utf8');
@@ -10,7 +12,7 @@ const availability=source.slice(source.indexOf('function updateWorkspaceAvailabi
 const startup=source.slice(source.indexOf('async function initializeWorkspace()'),source.indexOf('await initializeWorkspace();'));
 const elements=new Map(ids.map(id=>[id,{hidden:false,disabled:false,textContent:''}]));
 const requests=[],messages=[],classes=new Set();
-const sandbox={data:null,tool:null,tools:[],token:'',busy:false,exportBusy:false,
+const sandbox={data:null,tool:null,tools:[],token:'',busy:false,exportBusy:false,presetStore:{presets:[],last_used:null},presetError:'',identity:[[1,0,0],[0,1,0],[0,0,1]],importedMachiningState,profilePatch,fillFields(){},renderPresets(){},
  $:id=>{assert.ok(elements.has(id),id);return elements.get(id);},
  document:{body:{classList:{toggle:(name,active)=>active?classes.add(name):classes.delete(name)}}},
  api:async path=>{requests.push(path);return {token:'test-session-token',tools:[{id:'flat',name:'Tool'}]};},

@@ -321,6 +321,15 @@ def plan_ramps_and_links(job,triangles,*,entry_angle_deg=3.0,clearance=2.54,
         cleared=min(top,saved['z']) if saved else top
         if cleared-peak[2]>stepdown+EPS and cleared_area.covers(peak,peak,peak[2]+stepdown):
             cleared=peak[2]+stepdown
+        # A clipped raster can be shorter than a viable ramp although an
+        # earlier cleanup already swept its entry. Prove the complete tool
+        # footprint at the target depth before asking for a cutting entry.
+        # This uses completed cuts only, with the same guarded area proof
+        # independently replayed for approach/cleared_feed below.
+        ramp_length=sum(math.dist(a[:2],b[:2]) for a,b in zip(branches[0][0],branches[0][0][1:]))
+        if (cleared>peak[2]+EPS and (cleared-peak[2])/(tangent*ramp_length)>max_ramp_passes
+                and cleared_area.covers(peak,peak,peak[2],require_cut=True)):
+            cleared=peak[2]
         entry_floor=max(cleared,peak[2])
         if entry_floor-peak[2]>stepdown+EPS:
             raise MotionPlanningError(f'Entry needs more than one stepdown without prior clearance at {context}')

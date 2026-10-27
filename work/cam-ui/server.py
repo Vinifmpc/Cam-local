@@ -28,6 +28,7 @@ from cam_operations import OperationSettings,validate_operations
 from grbl_post import export_grbl
 from mesh_geometry import place_stl,MAX_BYTES
 from command_control import CommandMailbox
+from machining_presets import PresetStore
 
 STATIC=ROOT/'work/cam-ui/static' if getattr(sys,'frozen',False) else Path(__file__).parent/'static'
 THREE=ROOT/'work/ui-runtime/node_modules/three'
@@ -39,6 +40,8 @@ class App:
         self.data=Path(data or ROOT/'work/ui-data');self.data.mkdir(parents=True,exist_ok=True)
         self.outputs=Path(outputs or ROOT/'outputs/CAM-local/projetos');self.outputs.mkdir(parents=True,exist_ok=True)
         self.tools_path=self.outputs.parent/'ferramentas.json'
+        self.presets=PresetStore(self.outputs.parent/'machining-presets.json')
+        self.presets.migrate_latest(self.outputs)
         if not self.tools_path.exists():
             ToolLibrary([Tool(id='flat-3_175',name='Topo reto Ø3,175 mm',diameter_mm=3.175,
                 cutting_length_mm=22,notes='Confira as dimensões reais da ferramenta e preencha avanços e RPM.')]).save(self.tools_path)
@@ -352,7 +355,9 @@ def handler_for(app):
             try:
                 self.local_request();url=urlparse(self.path);path=url.path
                 if path=='/api/bootstrap':
-                    return self.send(200,{'application':'cam-local-v1','command_api':1,'token':app.token,'tools':ToolLibrary.load(app.tools_path).as_dict()['tools']})
+                    try:presets=app.presets.read()
+                    except (ValueError,OSError) as error:presets={'presets':[],'last_used':None,'selected_id':None,'error':str(error)}
+                    return self.send(200,{'application':'cam-local-v1','command_api':1,'token':app.token,'tools':ToolLibrary.load(app.tools_path).as_dict()['tools'],'presets':presets})
                 if path=='/api/demo':return self.send(200,app.demo())
                 if path.startswith('/api/jobs/'):
                     identifier=path.rsplit('/',1)[-1]
@@ -399,6 +404,7 @@ def handler_for(app):
                     return self.send(200,{'asset':asset})
                 if url.path=='/api/import-project':return self.send(200,app.restore(data))
                 record=json.loads(data)
+                if url.path=='/api/presets':return self.send(200,app.presets.update(record))
                 if url.path=='/api/commands/submit':return self.send(202,app.commands.submit(record['command'],record.get('timeout_s',30)))
                 if url.path=='/api/commands/next':return self.send(200,app.commands.next(record['client'],record.get('wait_s',20)))
                 if url.path=='/api/commands/result':return self.send(200,app.commands.result(record['command_id']))

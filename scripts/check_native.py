@@ -75,9 +75,16 @@ def main():
         restored=run('project.open',path=saved['path'])
         check('Project roundtrip preserves geometry and requires recalculation',restored['model']['bounds_mm']['size']==[20,20,5]
             and restored['simulation']['moves']==0)
+        run('config.patch',operations={'roughing_feed_mm_min':723,'plunge_mm_min':137,'spindle_rpm':8100})
+        presets=run('presets.save',name='Ensaio nativo');preset_id=presets['selected_id']
+        run('config.patch',operations={'plunge_mm_min':222});run('presets.apply',id=preset_id)
+        check('Named preset restores feeds through the real UI',run('state')['operations']['plunge_mm_min']==137)
+        run('config.patch',operations={'plunge_mm_min':141})
         close();client=start();state=run('state')
         check('Restart stays empty even after using an example and saving a project',state['model'] is None
             and state['workspace']['empty_visible'] and state['simulation']['moves']==0)
+        check('Latest feeds and saved presets survive native restart',state['operations']['plunge_mm_min']==141
+            and state['operations']['roughing_feed_mm_min']==723 and run('presets.list')['items'][-1]['profile']['operations']['plunge_mm_min']==137)
         report['status']='passed'
     except Exception as error:report.update(status='failed',error=str(error));raise
     finally:

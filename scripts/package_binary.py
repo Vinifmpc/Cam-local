@@ -32,6 +32,8 @@ O WebView2 precisa estar instalado no Windows. Dados persistentes ficam em `%LOC
 
 Use os ícones Girar, Origem e Mover na vista 3D para posicionar a peça. O modo inteligente usa Rough nos detalhes e pode recortar miolos passantes antes de liberar o exterior, preservando a sobra para retirada. Confira ferramenta, unidade, posicionamento e avanços; simule antes de exportar. O motor é experimental e não se conecta à máquina.
 
+Presets de usinagem salvam ferramenta, avanços, plunge, RPM e ajustes de corte. Os últimos valores também são restaurados automaticamente ao reabrir. Profundidades, posicionamento e regiões continuam específicos da peça.
+
 Comandos estão em COMANDOS.md. O código original é MIT; bibliotecas mantêm suas próprias licenças. Fontes de terceiros incluídos ficam em sources/. O código do CAM Local acompanha a publicação no GitHub e permite reconstruir o EXE após modificar as bibliotecas.
 ''',encoding='utf8')
     # Explicit inputs keep unrelated output files out of a subsequent release.

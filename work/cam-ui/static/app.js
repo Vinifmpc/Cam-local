@@ -13,11 +13,13 @@ import {getCutoutRecovery} from './cutout_feedback.js';
 import {effectiveMachiningOptions,validateSmartOperationPatch,smartPlanText,smartEntryHint,smartPolicyText} from './smart_mode.js';
 import {createAutomaticRegionOverlay,smartPlanForState} from './automatic_regions.js';
 import {placementAction,placementOrigin,samePlacement} from './placement_controls.js';
+import {machiningProfile,profilePatch} from './machining_presets.js';
 const $=id=>document.getElementById(id),fmt=(v,d=2)=>Number(v).toLocaleString('pt-BR',{maximumFractionDigits:d});
 const flip=[[1,0,0],[0,-1,0],[0,0,-1]];
 const identity=[[1,0,0],[0,1,0],[0,0,1]];
 const rect=(x0,y0,x1,y1)=>[[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
 let token='',tools=[],data=null,tool=null,settings={},placement={},motion=null,windows=null,operations={},feedClock=null,computedProject=null,exportBusy=false;
+let presetStore={presets:[],last_used:null,selected_id:null},presetTimer=null,presetQueue=Promise.resolve(),presetSaving=false,presetError='';
 let revision=0,playing=false,cursor=0,lastTime=0,busy=false,mode='paths',drawMode=null,dragStart=null,preview=null;
 let drawShape=null,draftPoints=[],drawingPointer=null,pendingRegionShape='rectangle';
 let calcProgressTimer=null,calcProgressStarted=0,calcProgressValue=null,activeCalculationJob=null,cancellationRequested=false;
@@ -311,6 +313,47 @@ function readOperations({strict=true}={}){
  values.operationSequence=operationList.getState().order;
  return readOperationValues(values,operations,tool,strict?number('stockTop'):numericValue($('stockTop').value,'Topo do bruto',{required:false,fallback:settings.stock_top_mm??0}),{strict});
 }
+function presetState(detail=false){return {selected_id:presetStore.selected_id,items:presetStore.presets.map(p=>detail?p:{id:p.id,name:p.name}),last_used_available:!!presetStore.last_used,saving:presetSaving,error:presetError||null};}
+function renderPresets(){
+ const select=$('presetSelect');select.replaceChildren(new Option('Últimos ajustes · automático',''));
+ for(const p of presetStore.presets)select.add(new Option(p.name,p.id));select.value=presetStore.selected_id||'';
+ $('presetTools').hidden=!presetStore.selected_id;
+ $('presetStatus').dataset.error=String(!!presetError);
+ $('presetStatus').textContent=presetError|| (presetSaving?'Salvando ajustes…':presetStore.last_used?'Ajustes salvos · restaurados ao reabrir.':'Avanços e ajustes serão lembrados automaticamente.');
+}
+function currentMachiningProfile(){return machiningProfile(tool,readSettings({strict:false}),readOperations({strict:false}));}
+function storePreset(record){
+ clearTimeout(presetTimer);presetTimer=null;presetSaving=true;presetError='';renderPresets();
+ const operation=presetQueue.catch(()=>{}).then(()=>api('/api/presets',record));presetQueue=operation;
+ return operation.then(saved=>{presetStore=saved;presetError='';return saved;}).catch(error=>{presetError='Ajustes não salvos: '+error.message;throw error;}).finally(()=>{presetSaving=false;renderPresets();});
+}
+async function rememberMachining(){
+ if(!tool)return;clearTimeout(presetTimer);presetTimer=null;
+ return storePreset({action:'remember',profile:currentMachiningProfile(),selected_id:presetStore.selected_id});
+}
+function scheduleRemember(){
+ if(!token||!tool)return;clearTimeout(presetTimer);
+ presetTimer=setTimeout(()=>rememberMachining().catch(error=>{presetError='Ajustes não salvos: '+error.message;renderPresets();}),400);
+}
+function applyMachiningProfile(profile){
+ commandIdle();const stock=data?readStockSettings():null;
+ const next=profilePatch(profile,data?readSettings({strict:false}):settings,data?readOperations({strict:false}):operations);
+ tool=next.tool;settings=next.settings;operations=next.operations;
+ fillFields();displayToolSelect();if(stock)for(const [id,key]of Object.entries({stockX0:'x0',stockY0:'y0',stockX1:'x1',stockY1:'y1',gridStep:'step'}))$(id).value=stock[key];
+ if(data){makeTool();dirty('Preset aplicado. Confira a ferramenta e recalcule os percursos.');}
+}
+async function applyPreset(id){
+ const p=presetStore.presets.find(p=>p.id===id);if(!p)throw Error('Escolha um preset salvo.');
+ applyMachiningProfile(p.profile);presetStore.selected_id=id;await rememberMachining().catch(()=>{});return presetState(true);
+}
+async function savePreset(name,id=null){
+ commandIdle();await storePreset({action:'save',name,profile:currentMachiningProfile(),...(id?{id}:{})});return presetState(true);
+}
+$('presetSelect').onchange=()=>{const id=$('presetSelect').value;if(id)applyPreset(id).catch(e=>toast(e.message,true));else{presetStore.selected_id=null;rememberMachining().catch(e=>toast(e.message,true));}};
+$('savePreset').onclick=()=>{$('presetName').value='';$('presetDialog').showModal();$('presetName').focus();};
+$('presetForm').onsubmit=async e=>{e.preventDefault();try{await savePreset($('presetName').value);$('presetDialog').close();toast('Preset salvo.');}catch(error){$('presetDialogError').textContent=error.message;}};
+$('updatePreset').onclick=()=>{const p=presetStore.presets.find(p=>p.id===presetStore.selected_id);if(p)savePreset(p.name,p.id).then(()=>toast('Preset atualizado.')).catch(e=>toast(e.message,true));};
+$('deletePreset').onclick=()=>storePreset({action:'delete',id:presetStore.selected_id}).catch(e=>toast(e.message,true));
 function updateOperationControls(){
  const contourOption=[...($('cutoutContours').options||[])].find(option=>option.value==='external');
  if(contourOption)contourOption.textContent=smartModeEnabled()?'Automático · internos vantajosos + externo':'Soltar a peça · somente externo';
@@ -419,6 +462,7 @@ function setMotion(value,projectId=null,quietStock=false){
  displayPaths();updateCursor();resetStock(!quietStock);renderSmartPlan();
 }
 function dirty(reason='Configuração alterada. Recalcule os percursos.',quietStock=false){
+ scheduleRemember();
  clearCutoutRecovery();
  $('drillInspection').replaceChildren();
  if(!busy)clearCalculationProgress();else showCalculationProgress({status:'running'},true);
@@ -495,7 +539,7 @@ function adopt(sceneData){
  fillFields();displayToolSelect();setModel(data.triangles);renderRegions();regionList();setMotion(data.motion,data.project_id);
  $('sceneTag').textContent=sceneData.isDemo?'EXEMPLO · PLACA COM BOLSÃO':sceneData.approximate_regions?'REGIÕES APROXIMADAS':'PROJETO LOCAL';$('notice').textContent=sceneData.approximate_regions?'Regiões aproximadas · confira seus limites':'Motor experimental · sem conexão com máquina';
  $('planState').textContent=motion?'Percurso validado pelo motor':'Calcular percurso';$('planState').className='pill';$('calcStatus').textContent=motion?'Percurso carregado pronto para reprodução.':'Confira os parâmetros e calcule os percursos.';$('loadingScene').hidden=true;
- updateWorkspaceAvailability();syncPlacementUi();
+ updateWorkspaceAvailability();syncPlacementUi();scheduleRemember();
 }
 function request(){if(!data)throw Error('Abra um STL primeiro.');settings=readSettings();operations=readOperations();return {asset:data.asset,placement,tool,settings,operations,notes:data.notes||'Projeto preparado pela interface local.',ui:{windows,stock:readStockSettings(),approximate_regions:!!data.approximate_regions}};}
 function sceneForNewMesh(inspected,currentSettings,currentOperations){
@@ -512,7 +556,7 @@ $('emptyDemo').onclick=()=>loadDemo().catch(e=>toast(e.message,true));
 $('stlFile').onchange=async()=>{
  const file=$('stlFile').files[0];if(!file)return;
  try{
-  const currentSettings=data?readSettings({strict:false}):{},currentOperations=data?readOperations({strict:false}):{};
+  const currentSettings=readSettings({strict:false}),currentOperations=readOperations({strict:false});
   const asset=await api('/api/upload?name='+encodeURIComponent(file.name),file,true);
   const p={units:$('units').value||'mm',rotation:$('face').value==='custom'?(placement.rotation||identity):($('face').value==='flip'?flip:identity),translation_mm:[0,0,0],xy_origin:$('xyOrigin').value||'minimum',z_origin:$('zOrigin').value||'top'};
   const sceneData=await api('/api/inspect',{asset:asset.asset,placement:p});
@@ -637,7 +681,7 @@ $('machiningMode').onchange=()=>{
  syncSmartOperationList();updateOperationControls();regionList();dirty(smartModeEnabled()?'Modo inteligente ativo. Confira o plano ou calcule Rough e Cutout juntos.':'Modo manual ativo. Confira as operações e calcule novamente.');updateHints();
 };
 $('inspectSmartPlan').onclick=()=>inspectSmartPlan().catch(error=>toast(error.message,true));
-$('reviewCenterCutting').onclick=()=>{selectOperationTab('drill');$('drillCenterCutting').focus({preventScroll:true});};
+$('reviewCenterCutting').onclick=()=>{selectOperationTab('rough');$('drillCenterCutting').focus({preventScroll:false});};
 for(const id of [...Object.keys(fieldMap),'smartStockBottom','smartBreakthrough','smartSkin','bottom','stepover','strategy','cleanup','obstacleTop','cutoutDepth','cutoutStepdown','cutoutDirection','cutoutContours','cutoutUsePriorRoughing','drillDepth','drillPeck','drillTolerance','drillFeed','drillAllowHelix','drillCenterCutting','drillCompensateFacets','roughFeed','cutoutFeed','plungeFeed','rapidFeed','spindleRpm','roughingOrder']){
  $(id).addEventListener('change',()=>{updateOperationControls();updateHints();dirty();if(id==='stockTop')renderRegions();});
  if($(id).type==='number')$(id).addEventListener('input',()=>{
@@ -645,10 +689,10 @@ for(const id of [...Object.keys(fieldMap),'smartStockBottom','smartBreakthrough'
   // Invalidate immediately, including while an older calculation is running.
   // An incomplete number during typing is not an error to toast.
   if(motion||computedProject)dirty(undefined,true);else revision++;
-  renderSmartPlan();
+  renderSmartPlan();scheduleRemember();
  });
 }
-$('toolSelect').onchange=()=>{if($('toolSelect').value==='@project')return;tool=structuredClone(tools.find(t=>t.id===$('toolSelect').value));displayToolSelect();makeTool();updateHints();dirty('Ferramenta alterada. Recalcule os percursos.');};
+$('toolSelect').onchange=()=>{if($('toolSelect').value==='@project')return;tool=structuredClone(tools.find(t=>t.id===$('toolSelect').value));$('drillCenterCutting').checked=false;displayToolSelect();makeTool();updateHints();dirty('Ferramenta alterada. Recalcule os percursos.');};
 async function inspectDrill(){
  const rev=revision;$('inspectDrill').disabled=true;$('drillInspection').textContent='Analisando furos circulares…';
  try{
@@ -677,7 +721,7 @@ $('editTool').onclick=()=>{fillTool(tool||{});$('toolDialog').showModal();};
 $('newTool').onclick=()=>fillTool({id:'topo-'+Date.now(),name:'Nova fresa de topo reto',diameter_mm:3.175,cutting_length_mm:22});
 $('toolForm').onsubmit=async e=>{e.preventDefault();try{
  const t={...tool,id:$('toolId').value,name:$('toolName').value,kind:'flat_end_mill',diameter_mm:number('toolDiameter'),cutting_length_mm:number('toolLength'),overall_length_mm:number('toolOverall',true),feed_mm_min:number('toolFeed',true),plunge_mm_min:number('toolPlunge',true),spindle_rpm:number('toolRpm',true),flutes:number('toolFlutes',true),notes:$('toolNotes').value};
- const saved=await api('/api/tools',{tool:t,replace:tools.some(old=>old.id===t.id)});tools=saved.tools;tool=t;displayToolSelect();makeTool();updateHints();dirty('Ferramenta salva. Recalcule os percursos.');$('toolDialog').close();toast('Ferramenta salva na biblioteca local.');
+ const saved=await api('/api/tools',{tool:t,replace:tools.some(old=>old.id===t.id)});tools=saved.tools;if(JSON.stringify(t)!==JSON.stringify(tool))$('drillCenterCutting').checked=false;tool=t;displayToolSelect();makeTool();updateHints();dirty('Ferramenta salva. Recalcule os percursos.');$('toolDialog').close();toast('Ferramenta salva na biblioteca local.');
  }catch(e){$('toolError').textContent=e.message;}};
 for(const b of document.querySelectorAll('[data-close]'))b.onclick=()=>$(b.dataset.close).close();
 $('cancelCalculation').onclick=cancelCalculation;
@@ -686,6 +730,7 @@ async function startCalculation(strict=false){
   const payload=request(),atRevision=revision;
   failureContext={revision:atRevision,operations:payload.operations};
   validateTimingFeeds(payload.operations,payload.tool);busy=true;startCalculationProgress();$('calculate').disabled=true;$('calculate').setAttribute('aria-busy','true');$('calcStatus').textContent='Preparando o cálculo…';stop();cancelSolid();
+  await rememberMachining().catch(()=>{});
   const started=performance.now();
   const task=await api('/api/calculate',payload);
   if(!task.job)throw Error('O serviço local não informou o identificador do cálculo.');
@@ -874,12 +919,12 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
 requestAnimationFrame(animate);
 // Command actions operate on the same state and functions as the visible app.
 function commandState(detail=false){
- const s=data?readSettings({strict:false}):{},o=data?readOperations({strict:false}):{};
+ const s=tool?readSettings({strict:false}):{},o=tool?readOperations({strict:false}):{};
  const regions={keepin:(s.boundaries_mm||[]).map((p,index)=>({index,vertices:p.length})),keepout:(s.exclusions_mm||[]).map((p,index)=>({index,vertices:p.length}))};
  if(!detail){delete s.boundaries_mm;delete s.exclusions_mm;}
  return {model:data?{name:data.name,asset:data.asset,...data.mesh}:null,tool,settings:s,operations:o,operation_list:operationList.getState(),placement,
   workspace:{empty:!data,empty_visible:!$('emptyScene').hidden,can_calculate:!$('calculate').disabled,can_save:!$('saveProject').disabled},
-  placement_ui:placementUiState(detail),
+  placement_ui:placementUiState(detail),presets:presetState(detail),
   stock:data?readStockSettings():null,regions,notes:data?.notes||'',revision,smart_plan:smartPlanForState(currentSmartPlan(),detail),
   regions_ui:{picker:regionPicker?.state(),drawing:drawMode?{kind:drawMode==='boundary'?'keepin':'keepout',shape:drawShape,vertices:draftPoints.length}:null},
   feedback:{cutout_recovery:cutoutRecovery?{action:cutoutRecovery.action,label:cutoutRecovery.label,message:cutoutRecovery.message}:null},
@@ -901,6 +946,7 @@ async function patchCommandConfig(command){
  for(const key of ['settings','operations','tool'])if(command[key]!==undefined){
   const patch=commandObject(command[key],key);next[key]=key==='operations'?mergeOperationOptions(next[key],patch):{...next[key],...patch};
  }
+ if(command.tool!==undefined&&JSON.stringify(next.tool)!==JSON.stringify(tool)&&command.operations?.drill_center_cutting===undefined)next.operations.drill_center_cutting=false;
  if(command.settings?.region_mode!==undefined&&command.settings.region_mode!=='layer')throw Error('A interface usa region_mode=layer.');
  if(command.settings?.compress_collinear!==undefined&&command.settings.compress_collinear!==true)throw Error('A interface usa compress_collinear=true.');
  if(command.stock!==undefined)next.ui.stock={...next.ui.stock,...commandObject(command.stock,'stock')};
@@ -910,12 +956,18 @@ async function patchCommandConfig(command){
  if(revision!==atRevision||busy||exportBusy)throw Error('A configuração mudou durante a validação. Tente novamente.');
  settings=valid.settings;operations=valid.operations;tool=valid.tool;data.stock=valid.ui.stock;data.notes=next.notes;
  windows=null;fillFields();displayToolSelect();makeTool();renderRegions();regionList();dirty();
+ await rememberMachining().catch(()=>{});
  return commandState();
 }
 async function executeCommand(command){
  commandObject(command,'Comando');const action=command.action;
  if(action==='state')return commandState(!!command.detail);
  if(action==='tools.list')return {tools,selected:tool?.id||null};
+ if(action==='presets.list')return presetState(true);
+ if(action==='presets.save')return savePreset(command.name,command.id);
+ if(action==='presets.apply'){commandIdle();return applyPreset(command.id);}
+ if(action==='presets.delete'){commandIdle();await storePreset({action:'delete',id:command.id});return presetState(true);}
+ if(action==='presets.remember'){await rememberMachining();return presetState();}
  if(action==='drill.inspect')return inspectDrill();
  if(action==='machining.plan')return inspectSmartPlan();
  if(action==='cutout.recovery.apply')return applyCutoutRecovery();
@@ -939,7 +991,7 @@ async function executeCommand(command){
  if(action==='config.patch')return patchCommandConfig(command);
  if(action==='demo.open'){commandIdle();await loadDemo();return commandState();}
  if(action==='stl.open'){
-  commandIdle();const oldSettings=data?readSettings({strict:false}):{},oldOperations=data?readOperations({strict:false}):{};
+  commandIdle();const oldSettings=readSettings({strict:false}),oldOperations=readOperations({strict:false});
   const inspected=await api('/api/inspect',{asset:command.asset,placement:command.placement||{units:'mm',rotation:identity,xy_origin:'minimum',z_origin:'top'}});
   adopt(sceneForNewMesh(inspected,oldSettings,oldOperations));return commandState();
  }
@@ -956,9 +1008,10 @@ async function executeCommand(command){
  if(action==='tool.set'||action==='tool.save'){
   commandIdle();const chosen=command.tool||tools.find(t=>t.id===command.id);if(!chosen)throw Error('Ferramenta não encontrada.');
   const candidate={...tool,...chosen};const next={...commandRequest(),tool:candidate};
+  next.operations.drill_center_cutting=false;
   const valid=await api('/api/validate-config',next);
   if(action==='tool.save'){const saved=await api('/api/tools',{tool:valid.tool,replace:command.replace===true});tools=saved.tools;}
-  return patchCommandConfig({tool:valid.tool});
+  return patchCommandConfig({tool:valid.tool,operations:{drill_center_cutting:false}});
  }
  if(action==='regions.add'){
   commandIdle();if(!data)throw Error('Abra um STL primeiro.');
@@ -1035,7 +1088,14 @@ async function executeCommand(command){
 async function initializeWorkspace(){
  try{
   const boot=await api('/api/bootstrap');token=boot.token;tools=boot.tools;tool=tools[0]||null;
-  if(tool)displayToolSelect();
+  presetStore=boot.presets||presetStore;presetError=presetStore.error||'';
+  if(tool){
+   const initial=importedMachiningState({bounds_mm:{minimum:[0,0,-1],maximum:[1,1,0]}});
+   settings=initial.settings;operations=initial.operations;placement={units:'mm',rotation:identity,xy_origin:'minimum',z_origin:'top'};
+   if(presetStore.last_used){const next=profilePatch(presetStore.last_used,settings,operations);tool=next.tool;settings=next.settings;operations=next.operations;}
+   fillFields();displayToolSelect();
+  }
+  renderPresets();
   setMotion(null);updateWorkspaceAvailability();updateDepthLegend();view();
   $('loadingScene').hidden=true;$('partName').textContent='Nenhuma peça aberta';
   $('workspaceTitle').textContent='Prepare seu próximo percurso';$('sceneTag').textContent='PRONTO PARA COMEÇAR';

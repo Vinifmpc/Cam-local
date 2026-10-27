@@ -1,0 +1,9 @@
+.machining-presets{background:#f0f6fc;border:1px solid #d5e3f0;border-radius:9px;padding:12px;margin:14px 0}
+.machining-presets h3{margin:0 0 8px;font-size:12px;color:#244f72;display:flex;justify-content:space-between;align-items:center}
+.machining-presets h3 span{font-size:9px;color:#597990;font-weight:500}
+.preset-row{display:flex;gap:6px}.preset-row select{min-width:0;flex:1}.preset-row button{white-space:nowrap}
+.preset-tools{display:flex;gap:16px;margin-top:5px}.preset-tools[hidden]{display:none}
+.preset-tools button{font-size:10px;margin:0;padding:4px 0}
+#presetStatus{font-size:10px;line-height:1.5;margin:7px 0 0;color:#506e87}
+#presetStatus[data-error=true]{color:#a04440}
+.entry-capability{border-top:1px solid #e2e8ef;margin-top:13px;padding-top:7px}.entry-capability .hint{margin-top:4px}

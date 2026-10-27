@@ -34,6 +34,7 @@ Thumbs.db
 !/work/cam-ui/command_control.py
 !/work/cam-ui/desktop_app.py
 !/work/cam-ui/server.py
+!/work/cam-ui/machining_presets.py
 !/work/cam-ui/sample_model.py
 !/work/cam-ui/CAMLocal.spec
 !/work/cam-ui/desktop.ico
@@ -66,6 +67,7 @@ Thumbs.db
 !/work/roughing/region_order.py
 !/work/roughing/roughing_compare.py
 !/work/roughing/smart_planner.py
+!/work/roughing/short_entries.py
 !/work/roughing/stl_roughing.py
 !/work/roughing/track_index.py
 /work/ui-runtime/*

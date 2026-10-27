@@ -1,5 +1,7 @@
 CAM Local para Windows x64, com janela própria e exportação NC para GRBL.
 
+- Presets persistentes de ferramenta e usinagem, com restauração automática dos últimos avanços, plunge, RPM e passadas. Profundidades e regiões permanecem específicas de cada peça.
+- Rough inteligente aproveita contornos de limpeza para entrar em passadas muito curtas, com prova do contato da fresa e validação independente, sem habilitar mergulho central automaticamente.
 - Posicionamento integrado à vista 3D, com ícones de giro, nove pontos de origem XY, origem Z, deslocamento em mm e desfazer com recuperação das regiões e do percurso anterior.
 - Modo inteligente reconhece miolos passantes vantajosos: Rough nos detalhes, recortes internos completos e liberação externa por último.
 - Cálculo de áreas removidas otimizado, gravação compacta e paralelismo automático de até oito processos conforme o trabalho.

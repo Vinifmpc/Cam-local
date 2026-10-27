@@ -10,6 +10,12 @@ Recortar um miolo não equivale a desbastá-lo: a simulação conserva essa sobr
 
 O cálculo roda em processo separado, com progresso e cancelamento. A validação reconstrói as entradas, profundidades e ligações; a exportação relê o NC arredondado. O pós-processador usa movimentos lineares, milímetros, coordenadas absolutas e G54.
 
+Passadas de raster muito curtas podem receber uma entrada pelo contorno de limpeza da mesma camada. O trecho inicial acompanha uma aresta de contato existente em Z igual ou superior; o conector cabe no disco de contato ampliado pelo OpenCAMLib em um vértice desse contorno. Os limites automáticos, a retenção, o orçamento de profundidade e a ordem real dos cortes continuam sendo conferidos. A exportação verifica a referência do contorno e a geometria dessa entrada. Sem essa prova, a entrada continua exigindo rampa válida ou confirmação explícita de corte central.
+
+## Preferências de usinagem
+
+`machining_presets.py` mantém presets nomeados e os últimos ajustes em um JSON local com substituição atômica. O perfil inclui o snapshot da ferramenta e uma lista explícita de parâmetros reutilizáveis; não transfere STL, posicionamento, regiões, topo/fundo do bruto nem profundidades finais. O stepover é salvo em porcentagem do diâmetro. Abrir um projeto usa a configuração do próprio projeto; abrir outro STL reaproveita as preferências e adapta as profundidades à nova geometria. A interface e os comandos usam as mesmas funções para aplicar e salvar presets. A confirmação de corte central acompanha a ferramenta e é desmarcada ao trocar ou editar sua geometria.
+
 ## Desempenho do cálculo
 
 As regiões por camada e os lotes de contato OpenCAMLib são independentes e usam até oito processos automaticamente, conforme o tamanho do trabalho e os processadores disponíveis. Trabalhos pequenos permanecem seriais para evitar o custo de iniciar processos. A variável de ambiente `CAM_WORKERS`, de 1 a 32, permite limitar o orçamento; o valor também respeita o número de processadores disponíveis. Reinicie o aplicativo após mudar essa variável. Usar mais processos não garante menor tempo em trabalhos pequenos.

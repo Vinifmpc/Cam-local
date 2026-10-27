@@ -129,7 +129,7 @@ context.updateOperationControls();assert.equal(element('drillCenterCutting').dis
 element('machiningMode').value='manual';context.updateOperationControls();assert.equal(element('drillCenterCutting').disabled,true);
 let selectedTab=null,focused=false;context.selectOperationTab=tab=>selectedTab=tab;element('drillCenterCutting').focus=()=>focused=true;
 vm.runInContext(source.split('\n').find(line=>line.startsWith("$('reviewCenterCutting').onclick=")),context);element('reviewCenterCutting').onclick();
-assert.equal(selectedTab,'drill');assert.equal(focused,true,'The Rough hint links to the original capability checkbox, without duplicating it');
+assert.equal(selectedTab,'rough');assert.equal(focused,true,'The Rough hint links to the shared capability checkbox, without duplicating it');
 console.log('Smart mode: effective policy, manual preservation, stock summary, fixed operation list, readonly preview, concurrency and stale response guards passed.');
 
 // Through cores are delegated explicitly; a blind pocket is never described

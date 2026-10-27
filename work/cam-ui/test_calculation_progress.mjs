@@ -104,7 +104,7 @@ assert.equal(element('cancelCalculation').hidden,true);
 // alive without a new percentage, cancellation, previous motion and retry.
 const handler=source.slice(source.indexOf('async function startCalculation('),source.indexOf("$('exportNC').onclick=async()=>{"));
 let scheduled=0,replaced=0;
-Object.assign(context,{request:()=>({operations:{},tool:{}}),validateTimingFeeds(){},stop(){},cancelSolid(){},
+Object.assign(context,{request:()=>({operations:{},tool:{}}),validateTimingFeeds(){},stop(){},cancelSolid(){},rememberMachining:async()=>{},
  clearCutoutRecovery(){},cancelDraw(){},presentCalculationError(message){context.toast(message,true);},
  scheduleSolid(){scheduled++;},setMotion(){replaced++;},jobStatusText:state=>state.phase,
  calculationSummary:()=> 'Percurso calculado e salvo localmente.'});
