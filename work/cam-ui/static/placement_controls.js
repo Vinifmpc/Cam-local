@@ -1,5 +1,6 @@
 // Right-angle rotations and visual datum anchors. Backend inspection remains
 // the authority for the transformed STL, dimensions and machining setup.
+import {roundPolygon} from './region_shapes.js';
 const IDENTITY=[[1,0,0],[0,1,0],[0,0,1]];
 const QUARTER={x:[[1,0,0],[0,0,-1],[0,1,0]],y:[[0,0,1],[0,1,0],[-1,0,0]],z:[[0,-1,0],[1,0,0],[0,0,1]]};
 const dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0);
@@ -29,6 +30,10 @@ export function placementAction(current,mesh,triangles,action){
  if(action.kind==='origin_xy'){
   if(!Array.isArray(action.anchor)||action.anchor.length!==2||action.anchor.some(v=>![0,.5,1].includes(v)))throw Error('Escolha um dos nove pontos de origem XY.');
   for(let i=0;i<2;i++)result.translation_mm[i]-=anchor(lo[i],hi[i],action.anchor[i]);
+ }else if(action.kind==='origin_point'){
+  if(!Array.isArray(action.point_mm)||action.point_mm.length!==3||!action.point_mm.every(Number.isFinite))throw Error('Informe o ponto de referência X, Y e Z em mm.');
+  const axes=action.axes??'xyz';if(!['xy','z','xyz'].includes(axes))throw Error('Escolha os eixos xy, z ou xyz.');
+  for(const i of axes==='xy'?[0,1]:axes==='z'?[2]:[0,1,2])result.translation_mm[i]-=action.point_mm[i];
  }else if(action.kind==='origin_z'){
   const fractions={top:1,center:.5,bottom:0};
   if(!Object.hasOwn(fractions,action.anchor))throw Error('Origem Z inválida.');
@@ -60,6 +65,42 @@ export function placementAction(current,mesh,triangles,action){
   if(origin.z)result.translation_mm[2]-=anchor(lower[2],upper[2],{top:1,center:.5,bottom:0}[origin.z]);
  }else throw Error('Ação de posicionamento desconhecida.');
  return result;
+}
+
+export function nearestOutlinePoint(point,loops){
+ if(!Array.isArray(point)||point.length!==2||!point.every(Number.isFinite))throw Error('Informe X e Y do ponto na vista de topo.');
+ let best=null;
+ for(let li=0;li<loops.length;li++)for(let i=0;i<loops[li].length;i++){
+  const a=loops[li][i],b=loops[li][(i+1)%loops[li].length],d=b.map((v,j)=>v-a[j]),length=d[0]**2+d[1]**2;
+  if(!length)continue;
+  const t=Math.max(0,Math.min(1,((point[0]-a[0])*d[0]+(point[1]-a[1])*d[1])/length));
+  const hit=a.map((v,j)=>v+t*d[j]),distance=Math.hypot(hit[0]-point[0],hit[1]-point[1]);
+  if(!best||distance<best.distance_mm)best={point_mm:hit,distance_mm:distance,contour:li,edge:i};
+ }
+ if(!best)throw Error('O modelo não tem borda projetada disponível. Use as coordenadas ou os nove pontos de referência.');
+ return best;
+}
+
+export function shiftWorkFrame(scene,inspected,delta){
+ const [dx,dy,dz]=delta,shiftXY=p=>p.map(v=>[v[0]+dx,v[1]+dy]);
+ const settings=structuredClone(scene.settings),operations=structuredClone(scene.operations);
+ for(const key of ['stock_top_mm','bottom_mm','obstacle_top_mm'])if(settings[key]!=null)settings[key]+=dz;
+ if(settings.raster_origin_y_mm!=null)settings.raster_origin_y_mm+=dy;
+ for(const key of ['boundaries_mm','exclusions_mm'])if(settings[key]!=null)settings[key]=settings[key].map(shiftXY);
+ for(const key of ['cutout_bottom_mm','drill_bottom_mm','smart_stock_bottom_mm'])if(operations[key]!=null)operations[key]+=dz;
+ const stock=scene.stock?{...scene.stock,x0:scene.stock.x0+dx,x1:scene.stock.x1+dx,y0:scene.stock.y0+dy,y1:scene.stock.y1+dy}:null;
+ const windows=scene.windows?.map(b=>[b[0]+dx,b[1]+dy,b[2]+dx,b[3]+dy])??null;
+ return {...scene,...inspected,settings,operations,stock,windows,motion:null,project_id:null};
+}
+
+export function secondSideState(state,fixture){
+ if(!fixture||!Number.isFinite(fixture.diameter_mm)||fixture.diameter_mm<.1||!Number.isFinite(fixture.height_mm)||fixture.height_mm<0)throw Error('Informe diâmetro da área protegida (mínimo 0,1 mm) e altura da fixação acima da peça.');
+ const b=state.mesh.bounds_mm,center=b.minimum.slice(0,2).map((v,i)=>(v+b.maximum[i])/2);
+ const exclusion=roundPolygon(center,fixture.diameter_mm/2,undefined,'keepout');
+ return {...state,settings:{...state.settings,domain_mode:'silhouette',
+  exclusions_mm:[exclusion],obstacle_top_mm:state.settings.stock_top_mm+fixture.height_mm},operations:{...state.operations,
+  machining_mode:'manual',roughing_enabled:true,cutout_enabled:false,drill_enabled:false,
+  order:'roughing_then_cutout',operation_sequence:['roughing','drill','cutout'],smart_stock_bottom_mm:null}};
 }
 
 export function samePlacement(candidate,current,mesh){

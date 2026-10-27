@@ -246,3 +246,23 @@ Os últimos ajustes são gravados automaticamente no perfil local e restaurados 
 O preset inclui o snapshot da ferramenta, feedrates de Rough/Cutout/Drill, plunge, rápido, RPM, stepdown, stepover em porcentagem, rampa e opções das operações. A confirmação de corte pelo centro é salva junto da ferramenta e é desmarcada ao trocar de ferramenta. Ao aplicar em um projeto, o posicionamento, as regiões, os limites do bruto e as profundidades finais da peça são preservados.
 
 O arquivo `machining-presets.json` fica ao lado de `ferramentas.json` no perfil (`%LOCALAPPDATA%/CAMLocal` por padrão). Perfis de teste isolados usam seus próprios presets. Atualizações de versões antigas recuperam os ajustes do projeto local mais recente, sem abrir seu STL.
+
+## Zero da peça na borda e segunda face
+
+O zero G54 é a referência das coordenadas do projeto. Selecionar uma borda apenas preenche a referência; aplicar `origin_point` muda o zero. XY e Z podem mudar separadamente. O sistema desloca também polígonos Keep In/Out, limites do bruto, fase do raster, alturas de obstáculos e profundidades absolutas, mantendo a configuração física. Os percursos são invalidados e precisam de novo cálculo; desfazer recupera a configuração anterior.
+
+```json
+{"action":"placement.outline"}
+{"action":"placement.pick","enabled":true}
+{"action":"placement.pick","enabled":false}
+{"action":"placement.reference","point_mm":[20.3,7],"snap":true}
+{"action":"placement.action","kind":"origin_point","point_mm":[20,7,0],"axes":"xy"}
+{"action":"placement.action","kind":"origin_point","point_mm":[0,0,2],"axes":"z"}
+{"action":"placement.second_side","axis":"x","fixture":{"diameter_mm":20,"height_mm":3}}
+```
+
+`placement.outline` devolve os contornos externos projetados do STL já posicionado. `placement.reference` aproxima o par XY à borda por projeção no segmento; `snap:false` aceita o ponto informado diretamente. `placement.pick` mostra a vista de topo e realça o contorno para selecionar com o mouse. Os nove pontos da caixa e as referências Topo/Meio/Base continuam disponíveis.
+
+`placement.second_side` é explícito e exige as dimensões da fixação: `diameter_mm` é o diâmetro do círculo a proteger no centro da caixa da peça; `height_mm` é a altura da fixação acima do topo da peça após virar. O eixo de giro pode ser `x` ou `y`, sempre 180°. A operação muda para Manual, ativa só Rough, usa `domain_mode:silhouette`, remove as regiões da primeira face e cria o Keep Out central circunscrito. A travessia passa acima do topo declarado da fixação mais a folga configurada. Escolha a referência da segunda face depois do giro; a alteração do zero preserva essa nova fixação.
+
+A seleção do zero não comanda homing nem altera offsets no controlador: o NC contém G54 e usa as coordenadas do projeto. A referência física correspondente deve ser definida na CNC. A simulação não importa o bruto restante da primeira face.

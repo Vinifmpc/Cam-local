@@ -36,3 +36,9 @@ A grade acompanha o volume removido e as regiões protegidas. Ao pausar, uma rec
 - Tempos não incluem aceleração, troca de ferramenta ou espera do spindle.
 
 Nenhum modelo particular ou percurso pré-calculado é necessário para iniciar o programa.
+
+## Referência de trabalho e segunda face
+
+A seleção de borda usa a união projetada dos triângulos do STL posicionado, retendo os contornos externos. O ponto é a projeção XY no segmento do contorno, sem quantização adicional da coordenada. Esse passo não modifica a geometria; aplicar o zero altera a translação rígida do modelo e todos os dados do sistema de coordenadas, incluindo a fase do raster. O código NC continua usando G54.
+
+O preparo de segunda face é uma ação de posicionamento e configuração: gira 180° em X/Y, restringe o domínio ao `silhouette` já existente no motor e habilita somente Rough. O usuário informa o círculo central a proteger e sua altura acima da peça. O Keep Out é circunscrito à área informada, e o motor desconta o raio da ferramenta. O limite de obstáculos eleva o plano de travessia. Mudar o zero depois disso desloca também a fixação. A configuração original permanece no snapshot de desfazer. Nenhum estado de bruto previamente usinado é presumido ou importado automaticamente.

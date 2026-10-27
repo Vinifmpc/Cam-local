@@ -20,7 +20,7 @@ class Line{constructor(geometry,material){this.geometry=geometry;this.material=m
 const context={...shapes,$,document:{createElement:()=>new Element(),body:{classList:{add(){},remove(){}}},addEventListener:(name,fn)=>keys[name]=fn},
  renderer:{domElement:canvas},THREE:{BufferGeometry:Geometry,Vector3:class{},LineBasicMaterial:Material,LineLoop:Line,Line},
  scene:{add(){},remove(){}},camera:{top:50,bottom:-50,zoom:1},controls:{enabled:true},
- worldPoint:e=>({x:e.clientX,y:e.clientY}),stop(){},view(){},data:{},drawMode:null,drawShape:null,
+ worldPoint:e=>({x:e.clientX,y:e.clientY}),stop(){},view(){},cancelOriginPick(){},data:{},drawMode:null,drawShape:null,
  dragStart:null,preview:null,draftPoints:[],drawingPointer:null,pendingRegionShape:'rectangle',windows:null,
  settings:{boundaries_mm:null,exclusions_mm:[]},addRoughingRegion,bounds:()=>({minimum:[0,0,-1],maximum:[20,20,0]}),
  operationList:{select(){}},regionPicker:null,createRegionPicker(container,{onChoose}){

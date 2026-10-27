@@ -75,6 +75,19 @@ def main():
         restored=run('project.open',path=saved['path'])
         check('Project roundtrip preserves geometry and requires recalculation',restored['model']['bounds_mm']['size']==[20,20,5]
             and restored['simulation']['moves']==0)
+        run('regions.add',kind='keepout',shape='rectangle',min=[1,1],max=[2,2])
+        reference=run('placement.reference',point_mm=[20.3,7])
+        shifted=run('placement.action',kind='origin_point',axes='xy',point_mm=[20,7,0])
+        detail=run('state',detail=True)
+        check('Edge work zero preserves fixture coordinates and part dimensions',reference['point_mm']==[20,7]
+            and shifted['model']['bounds_mm']['minimum']==[-20,-7,-5]
+            and detail['settings']['exclusions_mm'][0][0]==[-19,-6])
+        run('placement.undo')
+        opposite=run('placement.second_side',axis='y',fixture={'diameter_mm':4,'height_mm':3})
+        check('Opposite face uses Rough only with a protected central fixture',not opposite['operations']['cutout_enabled']
+            and opposite['settings']['domain_mode']=='silhouette' and opposite['settings']['obstacle_top_mm']==3
+            and len(opposite['regions']['keepout'])==1)
+        run('placement.undo')
         run('config.patch',operations={'roughing_feed_mm_min':723,'plunge_mm_min':137,'spindle_rpm':8100})
         presets=run('presets.save',name='Ensaio nativo');preset_id=presets['selected_id']
         run('config.patch',operations={'plunge_mm_min':222});run('presets.apply',id=preset_id)

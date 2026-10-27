@@ -38,6 +38,17 @@ class ServerTests(unittest.TestCase):
         self.assertAlmostEqual(scene['mesh']['bounds_mm']['size'][0],254)
         with self.assertRaises(ValueError):self.app.inspect('../outside',{'units':'mm'})
 
+    def test_datum_outline_uses_placed_outer_edges_without_changing_project(self):
+        p={'units':'mm','xy_origin':'keep','z_origin':'keep','translation_mm':[12,8,3]}
+        outline=self.app.datum_outline(self.asset,p)
+        points=[v for loop in outline['polygons_mm'] for v in loop]
+        self.assertEqual(len(outline['polygons_mm']),1)
+        self.assertEqual([min(v[i] for v in points) for i in (0,1)],[7,3])
+        self.assertEqual([max(v[i] for v in points) for i in (0,1)],[17,13])
+        self.assertEqual(outline['z_top_mm'],1)
+        self.assertFalse(self.app.jobs);self.assertFalse(self.app.saved)
+        with self.assertRaises(ValueError):self.app.datum_outline('../outside',p)
+
     def test_saved_bundle_roundtrip_preserves_tool_regions_units_and_approximate_note(self):
         self.request['ui']['stock']={'x0':-6,'y0':-7,'x1':8,'y1':9,'step':.25}
         identifier,path=self.app.prepare(self.request)

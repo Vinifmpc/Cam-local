@@ -76,6 +76,16 @@ class App:
         return {'asset':asset,'name':item['name'],'placement':p,
                 'mesh':mesh.summary(),'triangles':mesh.triangles.reshape(-1).tolist()}
 
+    def datum_outline(self,asset,placement):
+        """Exact projected outer loops; only requested for visual edge picking."""
+        from stl_roughing import projected_shadow
+        from region_core import signed_area
+        mesh=place_stl(self.asset(asset)['path'],**self.placement(placement))
+        polygons=[p.tolist() for p in projected_shadow(mesh.triangles) if signed_area(p)>0]
+        if sum(len(p) for p in polygons)>200_000:raise ValueError('Contorno muito detalhado para seleção visual. Use os pontos de referência ou coordenadas.')
+        return {'polygons_mm':polygons,'bounds_mm':mesh.summary()['bounds_mm'],
+                'z_top_mm':float(mesh.triangles[:,:,2].max()),'source_sha256':mesh.summary()['source_sha256']}
+
     def inspect_drill(self,request):
         """Read-only hole/tool compatibility; no project or calculation created."""
         from drill import inspect_drill_compatibility
@@ -423,6 +433,7 @@ def handler_for(app):
                     if app.on_close:threading.Thread(target=app.on_close,daemon=True).start()
                     threading.Thread(target=self.server.shutdown,daemon=True).start();return
                 if url.path=='/api/inspect':return self.send(200,app.inspect(record['asset'],record['placement']))
+                if url.path=='/api/datum-outline':return self.send(200,app.datum_outline(record['asset'],record['placement']))
                 if url.path=='/api/drill-inspect':return self.send(200,app.inspect_drill(record))
                 if url.path=='/api/smart-plan':return self.send(200,app.smart_plan(record))
                 if url.path=='/api/calculate':return self.send(202,app.calculate(record))

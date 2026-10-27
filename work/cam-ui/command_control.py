@@ -13,6 +13,7 @@ UI_ACTIONS = {
     'state', 'demo.open', 'stl.open', 'project.adopt', 'project.save',
     'config.patch', 'placement.set', 'tools.list', 'tool.set', 'tool.save',
     'placement.panel', 'placement.action', 'placement.undo',
+    'placement.outline','placement.pick','placement.reference','placement.second_side',
     'presets.list','presets.save','presets.apply','presets.delete','presets.remember',
     'regions.add', 'regions.remove', 'regions.clear', 'regions.picker', 'regions.draw', 'regions.cancel',
     'operation.tab', 'operations.set', 'drill.inspect', 'cutout.recovery.apply', 'machining.plan',

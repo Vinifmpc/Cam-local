@@ -12,7 +12,7 @@ import {createRegionPicker} from './region_picker.js';
 import {getCutoutRecovery} from './cutout_feedback.js';
 import {effectiveMachiningOptions,validateSmartOperationPatch,smartPlanText,smartEntryHint,smartPolicyText} from './smart_mode.js';
 import {createAutomaticRegionOverlay,smartPlanForState} from './automatic_regions.js';
-import {placementAction,placementOrigin,samePlacement} from './placement_controls.js';
+import {placementAction,placementOrigin,samePlacement,nearestOutlinePoint,shiftWorkFrame,secondSideState} from './placement_controls.js';
 import {machiningProfile,profilePatch} from './machining_presets.js';
 const $=id=>document.getElementById(id),fmt=(v,d=2)=>Number(v).toLocaleString('pt-BR',{maximumFractionDigits:d});
 const flip=[[1,0,0],[0,-1,0],[0,0,-1]];
@@ -29,6 +29,7 @@ let depthColoring=true;
 let smartPlanPreview=null,smartPlanPending=false,manualOperationState=null,manualCutoutPreferences=null;
 let automaticRegionsSource=null,automaticRegionsZ=null;
 let placementPanelTab=null,placementUiBusy=false,placementUndo=null;
+let originPicking=false,originOutline=null,originReference=null,originRequest=0;
 try{depthColoring=localStorage.getItem('cam-depth-colors')!=='false';}catch{}
 let stockGeneration=0,stockBusy=false,stockReady=false,stockWanted=0,stockApplied=-1,stockLastSent=0,toastTimer;
 let stockSampleSnapshot=null;
@@ -168,11 +169,13 @@ placementGizmo.material.depthTest=false;placementGizmo.material.depthWrite=false
 const placementBox=new THREE.Box3Helper(new THREE.Box3(),0x80aacb);
 placementBox.material.transparent=true;placementBox.material.opacity=.55;placementBox.material.depthTest=false;placementBox.visible=false;
 scene.add(placementGizmo,placementBox);
+const originPreview=new THREE.Group(),originEdges=new THREE.Group();scene.add(originPreview,originEdges);
 let grid=null,stockMesh=null,stockWire=null,span=100;
 function resize(){const r=$('canvasHost').getBoundingClientRect();renderer.setSize(r.width,r.height,false);const a=r.width/r.height;camera.left=-span*a/2;camera.right=span*a/2;camera.top=span/2;camera.bottom=-span/2;camera.updateProjectionMatrix();}
 new ResizeObserver(resize).observe($('canvasHost'));
 function bounds(){return data?.mesh.bounds_mm||{minimum:[-10,-10,-5],maximum:[10,10,5],size:[20,20,10]};}
 function view(which='iso',fit=true){
+ if(originPicking)cancelOriginPick();
  let b=bounds();
  if(mode==='stock'){try{b={minimum:[number('stockX0'),number('stockY0'),simulationBottom()],maximum:[number('stockX1'),number('stockY1'),number('stockTop')]};b.size=b.maximum.map((v,i)=>v-b.minimum[i]);}catch{}}
  const center=new THREE.Vector3(...b.minimum).add(new THREE.Vector3(...b.maximum)).multiplyScalar(.5);
@@ -182,7 +185,7 @@ function view(which='iso',fit=true){
  if(which==='top'){camera.up.set(0,1,0);camera.position.copy(center).add(new THREE.Vector3(0,0,size*3));}
  else if(which==='front')camera.position.copy(center).add(new THREE.Vector3(0,-size*3,0));
  else camera.position.copy(center).add(new THREE.Vector3(size*1.25,-size*1.65,size*1.4));
- camera.lookAt(center);controls=new OrbitControls(camera,renderer.domElement);controls.target.copy(center);controls.enableDamping=true;controls.enableRotate=!drawMode;controls.update();resize();
+ camera.lookAt(center);controls?.dispose();controls=new OrbitControls(camera,renderer.domElement);controls.target.copy(center);controls.enableDamping=true;controls.enableRotate=!drawMode;controls.update();resize();
 }
 function setModel(triangles){
  clearGroup(modelGroup);const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(triangles,3));g.computeVertexNormals();
@@ -358,6 +361,8 @@ function updateOperationControls(){
  const contourOption=[...($('cutoutContours').options||[])].find(option=>option.value==='external');
  if(contourOption)contourOption.textContent=smartModeEnabled()?'Automático · internos vantajosos + externo':'Soltar a peça · somente externo';
  const smart=smartModeEnabled();
+ $('domainMode').disabled=smart||!$('roughEnabled').checked;
+ $('domainHint').textContent=smart?'O modo inteligente define as áreas de Rough automaticamente.':$('domainMode').value==='silhouette'?'Peça já recortada: limita o Rough à silhueta da peça. Desenhe Keep In para selecionar os detalhes e Keep Out para proteger a fixação.':'Bruto retangular: a área permitida define onde o Rough pode remover material.';
  for(const id of ['bottom','stepdown','stepover','roughFeed','roughingOrder','strategy','angle','sampling','radial','axial','cleanup'])$(id).disabled=!$('roughEnabled').checked;
  for(const id of ['cutoutDepth','cutoutStepdown','cutoutFeed','cutoutDirection','cutoutContours'])$(id).disabled=!$('cutoutEnabled').checked;
  for(const id of ['drillDepth','drillPeck','drillTolerance','drillFeed','drillAllowHelix','drillCenterCutting','drillCompensateFacets'])$(id).disabled=!$('drillEnabled').checked;
@@ -388,6 +393,7 @@ function fillFields(){
  $('plungeFeed').value=operations.plunge_mm_min??tool.plunge_mm_min??'';$('rapidFeed').value=operations.rapid_mm_min??3000;
  updateHints();updateOperationControls();
  $('strategy').value=settings.strategy;$('cleanup').checked=settings.cleanup_contours;
+ $('domainMode').value=settings.domain_mode||'expanded';updateOperationControls();
  $('obstacleTop').value=settings.obstacle_top_mm??settings.stock_top_mm;
  $('units').value=placement.units;$('face').value='custom';$('xyOrigin').value=placement.xy_origin||'keep';$('zOrigin').value=placement.z_origin||'keep';
  if(placement.xy_origin==='minimum'&&placement.z_origin==='top')$('face').value=JSON.stringify(placement.rotation)===JSON.stringify(flip)?'flip':'normal';
@@ -403,7 +409,7 @@ function readSettings({strict=true}={}){
  const depth=numericValue($('bottom').value,'Profundidade total do desbaste',{required:rough&&!smartModeEnabled(),fallback:settings.stock_top_mm-settings.bottom_mm,min:Number.MIN_VALUE});
  s.bottom_mm=s.stock_top_mm-depth;
  s.stepover_mm=numericValue($('stepover').value,'Stepover do desbaste',{required:rough,fallback:100*settings.stepover_mm/tool.diameter_mm,min:Number.MIN_VALUE,max:100})/100*tool.diameter_mm;
- s.strategy=$('strategy').value;s.cleanup_contours=$('cleanup').checked;s.region_mode='layer';s.compress_collinear=true;s.obstacle_top_mm=numericValue($('obstacleTop').value,'Altura máxima de obstáculos',{required:strict,fallback:settings.obstacle_top_mm??s.stock_top_mm});
+ s.strategy=$('strategy').value;s.cleanup_contours=$('cleanup').checked;s.domain_mode=$('domainMode').value||settings.domain_mode||'expanded';s.region_mode='layer';s.compress_collinear=true;s.obstacle_top_mm=numericValue($('obstacleTop').value,'Altura máxima de obstáculos',{required:strict,fallback:settings.obstacle_top_mm??s.stock_top_mm});
  return s;
 }
 function regionsChanged(){renderRegions();regionList();dirty('Regiões alteradas. Recalcule antes de simular.');}
@@ -530,6 +536,7 @@ function updateWorkspaceAvailability(){
  $('toolSelect').disabled=!tool;$('editTool').disabled=!tool;
 }
 function adopt(sceneData){
+ resetOriginReference();
  clearCutoutRecovery();cancelDraw();
  smartPlanPreview=null;manualOperationState=null;manualCutoutPreferences=null;
  if(!busy)clearCalculationProgress();
@@ -565,7 +572,8 @@ $('stlFile').onchange=async()=>{
 };
 function placementUiState(detail=false){
  const result={panel:placementPanelTab,enabled:!!data&&!busy&&!exportBusy&&!placementUiBusy,
-  undo_available:!!placementUndo&&placementUndo.revision===revision,origin:placementOrigin(data?.mesh.bounds_mm)};
+  undo_available:!!placementUndo&&placementUndo.revision===revision,origin:placementOrigin(data?.mesh.bounds_mm),
+  reference:{picking:originPicking,picker_hides_panel:originPicking&&$('placementPanel').hidden,point_mm:originReference,contours:originOutline?.polygons_mm.length||0}};
  if(detail){
   const frame=$('viewport').getBoundingClientRect(),dock=$('placementDock').getBoundingClientRect();
   result.layout={in_viewport:!!data&&dock.left>=frame.left&&dock.right<=frame.right&&dock.top>=frame.top&&dock.bottom<=frame.bottom,
@@ -574,7 +582,7 @@ function placementUiState(detail=false){
  return result;
 }
 function syncPlacementUi(){
- const state=placementUiState(),open=!!data&&!!placementPanelTab;
+ const state=placementUiState(),open=!!data&&!!placementPanelTab&&!originPicking;
  $('placementDock').hidden=!data;$('placementPanel').hidden=!open;
  $('placementDock').setAttribute('aria-busy',String(placementUiBusy));
  $('calculate').disabled=!data||busy||placementUiBusy;
@@ -583,13 +591,13 @@ function syncPlacementUi(){
  $('closePlacement').disabled=false;$('undoPlacement').disabled=!state.enabled||!state.undo_available;
  for(const button of $('placementDock').querySelectorAll('[data-placement-panel]'))button.setAttribute('aria-expanded',String(open&&button.dataset.placementPanel===placementPanelTab));
  for(const content of $('placementDock').querySelectorAll('[data-placement-content]'))content.hidden=content.dataset.placementContent!==placementPanelTab;
- $('placementTitle').textContent={rotate:'Girar a peça',origin:'Escolher a origem',move:'Mover a peça'}[placementPanelTab]||'Posicionar peça';
+ $('placementTitle').textContent={rotate:'Girar / segunda face',origin:'Zero da peça · G54',move:'Mover a peça'}[placementPanelTab]||'Posicionar peça';
  for(const button of $('placementDock').querySelectorAll('[data-placement-xy]'))button.setAttribute('aria-pressed',String(!!state.origin.xy&&button.dataset.placementXy===state.origin.xy.join(',')));
  for(const button of $('placementDock').querySelectorAll('[data-placement-z]'))button.setAttribute('aria-pressed',String(button.dataset.placementZ===state.origin.z));
  const xy=$('placementDock').querySelector('[data-placement-xy][aria-pressed="true"]');
  $('placementOriginLabel').textContent=`XY: ${xy?.title||'personalizada'} · Z: ${{top:'topo',center:'meio',bottom:'base'}[state.origin.z]||'personalizada'}`;
  $('placementDimensions').textContent=data?bounds().size.map(v=>fmt(v,2)).join(' × ')+' mm':'';
- placementGizmo.visible=placementBox.visible=open;
+ placementGizmo.visible=!!data&&mode==='paths';placementBox.visible=open;
  if(data){
   placementGizmo.scale.setScalar(Math.max(2,Math.min(15,Math.max(...bounds().size)*.12)));
   placementBox.box.min.fromArray(bounds().minimum);placementBox.box.max.fromArray(bounds().maximum);
@@ -598,6 +606,7 @@ function syncPlacementUi(){
 function setPlacementPanel(panel){
  if(panel!==null&&!['rotate','origin','move'].includes(panel))throw Error('Painel de posicionamento inválido.');
  if(panel!==null){commandIdle();if(!data)throw Error('Abra um STL primeiro.');stop();if(mode!=='paths')setMode('paths');cancelDraw();}
+ if(panel!=='origin')cancelOriginPick();
  placementPanelTab=panel;syncPlacementUi();
 }
 function placementSnapshot(){
@@ -613,23 +622,104 @@ function restorePlacementCamera(frame,recenter=false){
  }else{camera.position.fromArray(frame.position);controls.target.fromArray(frame.target);}
  camera.zoom=frame.zoom;camera.updateProjectionMatrix();controls.update();
 }
-async function applyPlacementCandidate(candidate){
+async function applyPlacementCandidate(candidate,{frameShift=false,secondSide=null}={}){
  commandIdle();if(!data)throw Error('Abra um STL primeiro.');
  if(candidate.xy_origin==='keep'&&candidate.z_origin==='keep'&&samePlacement(candidate,placement,data.mesh))return false;
  const saved=placementSnapshot(),atRevision=revision;placementUiBusy=true;syncPlacementUi();stop();
  try{
   const inspected=await api('/api/inspect',{asset:data.asset,placement:candidate});
   if(revision!==atRevision||busy||exportBusy)throw Error('A configuração mudou durante o posicionamento. Tente novamente.');
-  adopt(sceneForNewMesh(inspected,saved.scene.settings,saved.scene.operations));
-  restorePlacementCamera(saved.camera);placementUndo={...saved,revision};
+  const delta=candidate.translation_mm.map((v,i)=>v-saved.scene.mesh.transform.translation_mm[i]);
+  let next=frameShift?shiftWorkFrame(saved.scene,inspected,delta):sceneForNewMesh(inspected,saved.scene.settings,saved.scene.operations);
+  if(secondSide)next=secondSideState(next,secondSide);
+  adopt(next);
+  if(frameShift)restorePlacementCamera({...saved.camera,position:saved.camera.position.map((v,i)=>v+delta[i]),target:saved.camera.target.map((v,i)=>v+delta[i])});
+  else restorePlacementCamera(saved.camera);
+  placementUndo={...saved,revision};
   for(const axis of ['X','Y','Z'])$('placementDelta'+axis).value='0';
-  toast('Posição aplicada. Regiões limpas; use Desfazer posição para recuperá-las.');return true;
+  toast(frameShift?'Zero redefinido. Regiões, fixação e profundidades preservadas; recalcule os percursos.':secondSide?'Segunda face: apenas Rough, sem Cutout, com a fixação central protegida. Escolha o zero na borda.':'Posição aplicada. Regiões limpas; use Desfazer posição para recuperá-las.');return true;
  }finally{placementUiBusy=false;syncPlacementUi();}
 }
 async function runPlacementAction(action){
  commandIdle();if(!data)throw Error('Abra um STL primeiro.');
- return applyPlacementCandidate(placementAction(placement,data.mesh,data.triangles,action));
+ return applyPlacementCandidate(placementAction(placement,data.mesh,data.triangles,action),{frameShift:action.kind.startsWith('origin_')});
 }
+async function prepareSecondSide(axis='x',fixture){
+ if(!['x','y'].includes(axis))throw Error('Escolha X ou Y para virar a peça.');
+ commandIdle();if(!data)throw Error('Abra um STL primeiro.');
+ secondSideState({settings,operations,mesh:data.mesh},fixture);
+ const candidate=placementAction(placement,data.mesh,data.triangles,{kind:'rotate',axis,turns:2});
+ await applyPlacementCandidate(candidate,{secondSide:fixture});selectOperationTab('rough');setPlacementPanel('origin');return commandState();
+}
+function cancelOriginPick(){
+ const wasPicking=originPicking;originPicking=false;originRequest++;controls.enabled=!drawMode;
+ clearGroup(originEdges);if(originReference)previewOriginPoint(originReference);else originPreview.visible=false;
+ document.body.classList.remove('picking-origin');$('originPickHelp').hidden=true;
+ $('pickOriginEdge').textContent='Selecionar borda no modelo';
+ if(wasPicking)syncPlacementUi();
+}
+function resetOriginReference(){
+ cancelOriginPick();originOutline=null;originReference=null;clearGroup(originPreview);
+ $('originPointX').value=$('originPointY').value=$('originPointZ').value='0';
+}
+async function ensureOriginOutline(){
+ if(originOutline)return originOutline;
+ commandIdle();if(!data)throw Error('Abra um STL primeiro.');
+ const atRevision=revision,outline=await api('/api/datum-outline',{asset:data.asset,placement});
+ if(revision!==atRevision)throw Error('A peça mudou durante a leitura da borda. Selecione novamente.');
+ originOutline=outline;return outline;
+}
+function previewOriginPoint(point){
+ if(!originPreview.children.length){
+  const radius=Math.max(.4,Math.max(...bounds().size)*.016),z=0;
+  const line=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints([
+   new THREE.Vector3(-radius,0,z),new THREE.Vector3(radius,0,z),new THREE.Vector3(0,-radius,z),new THREE.Vector3(0,radius,z)]),
+   new THREE.LineBasicMaterial({color:0xe58b18,depthTest:false,depthWrite:false}));
+  line.renderOrder=1002;originPreview.add(line);
+ }
+ originPreview.position.set(point[0],point[1],bounds().maximum[2]+.1);originPreview.visible=true;
+}
+function selectOriginPoint(point){
+ if(!Array.isArray(point)||point.length!==2||!point.every(Number.isFinite))throw Error('Informe X e Y finitos em mm.');
+ originReference=[...point];$('originPointX').value=point[0];$('originPointY').value=point[1];
+ previewOriginPoint(point);cancelOriginPick();syncPlacementUi();return {point_mm:[...point]};
+}
+async function referenceOrigin(point,snap=true){
+ commandIdle();if(!data)throw Error('Abra um STL primeiro.');
+ const hit=snap?nearestOutlinePoint(point,(await ensureOriginOutline()).polygons_mm):{point_mm:point};
+ return {...selectOriginPoint(hit.point_mm),...(snap?{distance_mm:hit.distance_mm}:{} )};
+}
+async function beginOriginPick(){
+ setPlacementPanel('origin');cancelDraw();const ticket=++originRequest;
+ const outline=await ensureOriginOutline();if(ticket!==originRequest)return placementUiState();commandIdle();
+ view('top');controls.enabled=false;originPicking=true;
+ document.body.classList.add('picking-origin');$('originPickHelp').hidden=false;$('pickOriginEdge').textContent='Cancelar seleção';
+ clearGroup(originEdges);
+ for(const polygon of outline.polygons_mm){
+  const line=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(polygon.map(p=>new THREE.Vector3(...p,outline.z_top_mm+.05))),
+   new THREE.LineBasicMaterial({color:0x08a2c8,depthTest:false,depthWrite:false}));line.renderOrder=1001;originEdges.add(line);
+ }
+ syncPlacementUi();
+ return placementUiState();
+}
+function originHit(event){
+ const point=worldPoint(event);if(!point||!originOutline)return null;
+ const hit=nearestOutlinePoint([point.x,point.y],originOutline.polygons_mm);
+ return hit.distance_mm<=unitsPerPixel()*14?hit:null;
+}
+$('pickOriginEdge').onclick=()=>{if(originPicking)cancelOriginPick();else beginOriginPick().catch(error=>toast(error.message,true));};
+$('applyOriginXY').onclick=()=>{try{placementClick({kind:'origin_point',axes:'xy',point_mm:[number('originPointX'),number('originPointY'),0]});}catch(error){toast(error.message,true);}};
+$('applyOriginZ').onclick=()=>{try{placementClick({kind:'origin_point',axes:'z',point_mm:[0,0,number('originPointZ')]});}catch(error){toast(error.message,true);}};
+$('prepareSecondSide').onclick=()=>{try{prepareSecondSide($('secondSideAxis').value,{diameter_mm:number('secondSideDiameter'),height_mm:number('secondSideHeight')}).catch(error=>toast(error.message,true));}catch(error){toast(error.message,true);}};
+renderer.domElement.addEventListener('pointermove',event=>{
+ if(!originPicking)return;const hit=originHit(event);
+ if(hit)previewOriginPoint(hit.point_mm);else originPreview.visible=false;
+});
+renderer.domElement.addEventListener('pointerdown',event=>{
+ if(!originPicking||event.button!==0)return;event.preventDefault();
+ const hit=originHit(event);if(hit)selectOriginPoint(hit.point_mm);else toast('Clique próximo da borda azul para escolher o zero.');
+});
+renderer.domElement.addEventListener('pointercancel',cancelOriginPick);
 function undoPlacement(){
  commandIdle();if(!placementUndo||placementUndo.revision!==revision)throw Error('Nenhuma mudança de posição disponível para desfazer.');
  const saved=placementUndo;placementUndo=null;adopt(saved.scene);restorePlacementCamera(saved.camera);syncPlacementUi();
@@ -656,7 +746,7 @@ $('applyPlacement').onclick=async()=>{
    translation_mm:custom&&$('xyOrigin').value==='keep'&&$('zOrigin').value==='keep'?placement.translation_mm:[0,0,0]});
  }catch(error){toast(error.message,true);}
 };
-document.addEventListener('keydown',event=>{if(event.key==='Escape'&&placementPanelTab)setPlacementPanel(null);});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'){if(originPicking){event.preventDefault();cancelOriginPick();}else if(placementPanelTab)setPlacementPanel(null);}});
 new MutationObserver(syncPlacementUi).observe($('calculate'),{attributes:true,attributeFilter:['aria-busy']});
 new MutationObserver(syncPlacementUi).observe($('exportNC'),{attributes:true,attributeFilter:['disabled']});
 const operationList=createOperationList($('operationList'),{
@@ -682,7 +772,7 @@ $('machiningMode').onchange=()=>{
 };
 $('inspectSmartPlan').onclick=()=>inspectSmartPlan().catch(error=>toast(error.message,true));
 $('reviewCenterCutting').onclick=()=>{selectOperationTab('rough');$('drillCenterCutting').focus({preventScroll:false});};
-for(const id of [...Object.keys(fieldMap),'smartStockBottom','smartBreakthrough','smartSkin','bottom','stepover','strategy','cleanup','obstacleTop','cutoutDepth','cutoutStepdown','cutoutDirection','cutoutContours','cutoutUsePriorRoughing','drillDepth','drillPeck','drillTolerance','drillFeed','drillAllowHelix','drillCenterCutting','drillCompensateFacets','roughFeed','cutoutFeed','plungeFeed','rapidFeed','spindleRpm','roughingOrder']){
+for(const id of [...Object.keys(fieldMap),'smartStockBottom','smartBreakthrough','smartSkin','bottom','stepover','strategy','domainMode','cleanup','obstacleTop','cutoutDepth','cutoutStepdown','cutoutDirection','cutoutContours','cutoutUsePriorRoughing','drillDepth','drillPeck','drillTolerance','drillFeed','drillAllowHelix','drillCenterCutting','drillCompensateFacets','roughFeed','cutoutFeed','plungeFeed','rapidFeed','spindleRpm','roughingOrder']){
  $(id).addEventListener('change',()=>{updateOperationControls();updateHints();dirty();if(id==='stockTop')renderRegions();});
  if($(id).type==='number')$(id).addEventListener('input',()=>{
   updateHints();
@@ -808,7 +898,7 @@ function updateDrawHelp(){
 function beginDraw(kind,shape){
  if(!data||!$('roughEnabled').checked)return;
  if(!['keepout','boundary'].includes(kind)||!Object.keys(SHAPE_NAMES).includes(shape))throw Error('Tipo ou forma de região inválidos.');
- cancelDraw();stop();drawMode=kind;drawShape=shape;view('top');controls.enabled=false;
+ cancelOriginPick();cancelDraw();stop();drawMode=kind;drawShape=shape;view('top');controls.enabled=false;
  document.body.classList.add('drawing');$('drawHelp').hidden=false;updateDrawHelp();
 }
 function showRegionDialog(shape,kind,points,start,end){
@@ -1003,6 +1093,16 @@ async function executeCommand(command){
   adopt(sceneForNewMesh(inspected,readSettings({strict:false}),readOperations({strict:false})));return commandState();
  }
  if(action==='placement.panel'){setPlacementPanel(command.panel??null);return commandState();}
+ if(action==='placement.outline')return ensureOriginOutline();
+ if(action==='placement.pick'){
+  if(command.enabled!==undefined&&typeof command.enabled!=='boolean')throw Error('enabled deve ser booleano.');
+  if(command.enabled===false){cancelOriginPick();return placementUiState();}return beginOriginPick();
+ }
+ if(action==='placement.reference'){
+  if(command.snap!==undefined&&typeof command.snap!=='boolean')throw Error('snap deve ser booleano.');
+  return referenceOrigin(commandVector(command.point_mm,'point_mm',2),command.snap??true);
+ }
+ if(action==='placement.second_side')return prepareSecondSide(command.axis??'x',command.fixture);
  if(action==='placement.action'){await runPlacementAction(command);return commandState();}
  if(action==='placement.undo'){undoPlacement();return commandState();}
  if(action==='tool.set'||action==='tool.save'){
