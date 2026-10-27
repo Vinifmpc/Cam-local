@@ -85,7 +85,9 @@ export function shiftWorkFrame(scene,inspected,delta){
  const [dx,dy,dz]=delta,shiftXY=p=>p.map(v=>[v[0]+dx,v[1]+dy]);
  const settings=structuredClone(scene.settings),operations=structuredClone(scene.operations);
  for(const key of ['stock_top_mm','bottom_mm','obstacle_top_mm'])if(settings[key]!=null)settings[key]+=dz;
- if(settings.raster_origin_y_mm!=null)settings.raster_origin_y_mm+=dy;
+ // Phase is the Y coordinate in the rotated raster frame, not world Y.
+ const angle=(settings.raster_angle_deg??0)*Math.PI/180;
+ if(settings.raster_origin_y_mm!=null)settings.raster_origin_y_mm+=-dx*Math.sin(angle)+dy*Math.cos(angle);
  for(const key of ['boundaries_mm','exclusions_mm'])if(settings[key]!=null)settings[key]=settings[key].map(shiftXY);
  for(const key of ['cutout_bottom_mm','drill_bottom_mm','smart_stock_bottom_mm'])if(operations[key]!=null)operations[key]+=dz;
  const stock=scene.stock?{...scene.stock,x0:scene.stock.x0+dx,x1:scene.stock.x1+dx,y0:scene.stock.y0+dy,y1:scene.stock.y1+dy}:null;

@@ -50,8 +50,8 @@
     },
     {
       "path": "docs/RELEASE_NOTES.md",
-      "bytes": 2115,
-      "sha256": "705c78c0a859587bedee9f425aef147ac79d1949c59ffd2e286611870276befd"
+      "bytes": 2246,
+      "sha256": "9b5fc87258db02786d188bab0e52765930747de8976f2891f86b345a207a9b79"
     },
     {
       "path": "docs/UPLOAD.md",
@@ -280,8 +280,8 @@
     },
     {
       "path": "work/cam-ui/static/placement_controls.js",
-      "bytes": 7208,
-      "sha256": "2e87493ffc3fba349b3f84f36b70c63c3675aa613512b317b4e8072e909368a8"
+      "bytes": 7373,
+      "sha256": "26fe21f237b7d5a6826e8ad1dd65f5e3ff1a61d68900820029d964bc7ed888be"
     },
     {
       "path": "work/cam-ui/static/playback.js",
@@ -475,8 +475,8 @@
     },
     {
       "path": "work/cam-ui/test_work_origin.mjs",
-      "bytes": 4395,
-      "sha256": "fe53178af9cce7f7a6af5796128f0f6ea32eb946c5046a8ef4f96db05f277269"
+      "bytes": 4719,
+      "sha256": "5b17d1d6ab76132b94681ea8799cbe6bd5e9ed55bc7b4cac17cc48e1885631a6"
     },
     {
       "path": "work/geometry-runtime/package-lock.json",

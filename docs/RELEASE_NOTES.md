@@ -1,6 +1,7 @@
 CAM Local para Windows x64, com janela própria e exportação NC para GRBL.
 
 - Zero de trabalho na borda, com seleção visual do contorno e coordenadas manuais para XY/Z independentes. Regiões, bruto e profundidades acompanham a nova referência.
+- A fase das passadas inclinadas acompanha a mudança do zero no sistema de coordenadas do raster, preservando o traçado físico.
 - Preparo da segunda face: giro em X/Y, Rough na silhueta, Cutout desativado e área central protegida conforme diâmetro/altura informados para a fixação.
 - Presets persistentes de ferramenta e usinagem, com restauração automática dos últimos avanços, plunge, RPM e passadas. Profundidades e regiões permanecem específicas de cada peça.
 - Rough inteligente aproveita contornos de limpeza para entrar em passadas muito curtas, com prova do contato da fresa e validação independente, sem habilitar mergulho central automaticamente.

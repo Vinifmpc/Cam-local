@@ -15,6 +15,11 @@ assert.deepEqual(scene,before,'Changing the frame must not mutate the old projec
 assert.deepEqual(shift.settings.exclusions_mm,[[[-12,1],[-8,1],[-8,5],[-12,5]]]);
 assert.equal(shift.settings.stock_top_mm,2);assert.equal(shift.settings.bottom_mm,-4);assert.equal(shift.settings.obstacle_top_mm,6);
 assert.equal(shift.settings.raster_origin_y_mm,-26.7);assert.equal(shift.settings.stepdown_mm,.7);
+for(const angle of [30,45,90,135]){
+ const delta=[-30,-27,2],rotated={...scene,settings:{...scene.settings,raster_angle_deg:angle}};
+ const phase=shiftWorkFrame(rotated,{},delta).settings.raster_origin_y_mm;
+ assert.ok(Math.abs(phase-(.3-delta[0]*Math.sin(angle*Math.PI/180)+delta[1]*Math.cos(angle*Math.PI/180)))<1e-10);
+}
 assert.equal(shift.operations.cutout_bottom_mm,-4);assert.equal(shift.operations.drill_bottom_mm,-2);assert.equal(shift.operations.smart_stock_bottom_mm,-6);assert.equal(shift.operations.plunge_mm_min,150);assert.equal(shift.operations.smart_breakthrough_mm,.2);
 assert.equal(shift.motion,null);assert.equal(shift.project_id,null);assert.deepEqual(shift.stock,{x0:-22,y0:-9,x1:2,y1:15,step:.25});assert.deepEqual(shift.windows,[[-22,-9,2,15]]);
 const outline=[[[0,0],[20,0],[20,20],[0,20]]];
