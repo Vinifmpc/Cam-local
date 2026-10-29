@@ -8,14 +8,14 @@ import subprocess
 import zipfile
 
 ROOT=Path(__file__).resolve().parents[1]
-ENGINE='audit_gcode camadas_desbaste cam_operations cam_project cam_setup cam_tools cleared_area cutout cutout_rest depth_staging drill grbl_post internal_cutouts layer_regions layer_roughing mesh_geometry motion_planner parallel_workers planar_roughing reference_keepout region_core region_order roughing_compare short_entries smart_planner stl_roughing track_index'.split()
-UI='calculation_worker command_client command_control desktop_app server sample_model machining_presets'.split()
+ENGINE='annular_pocket audit_gcode camadas_desbaste cam_operations cam_project cam_setup cam_tools cleared_area contour_flow cutout cutout_rest depth_staging drill fixture_travel grbl_post internal_cutouts layer_regions layer_roughing mesh_geometry motion_planner motion_timing parallel_workers planar_roughing reference_keepout region_core region_order roughing_compare rough_quality short_entries smart_planner stl_roughing track_index'.split()
+UI='calculation_worker command_client command_control desktop_app server sample_model machining_presets grbl_controller'.split()
 
 
 def source_files():
     files=[Path(name) for name in ('README.md','LICENSE','CONTRIBUTING.md','THIRD_PARTY_NOTICES.md',
            '.gitignore','.gitattributes','requirements.txt','requirements-dev.txt')]
-    for folder in ('docs','scripts','.github/workflows','third_party'):
+    for folder in ('docs','scripts','.github/workflows','third_party','work/cncjs-widget'):
         files += [p.relative_to(ROOT) for p in (ROOT/folder).rglob('*') if p.is_file() and '__pycache__' not in p.parts]
     for folder,names in (('work/roughing',ENGINE),('work/cam-ui',UI)):
         files += [Path(folder)/(name+'.py') for name in names]

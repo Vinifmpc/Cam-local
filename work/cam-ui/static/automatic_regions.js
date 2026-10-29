@@ -11,7 +11,7 @@ export function automaticRegionText(plan,format=value=>String(value)){
  const regions=plan?.automatic_regions;
  if(!regions)return '';
  const fullContour=plan.exterior_strategy?.mode==='features_then_cutout';
- let text=`Rough automático: área dos centros da fresa de ${format(regions.area_mm2)} mm²${fullContour?'. Os cortes seguem as formas 3D, bolsões e rebaixos por profundidade, inclusive abertos à borda.':`; faixa de planejamento de ${format(regions.offset_mm)} mm ao redor da peça.`}`;
+ let text=`Rough automático: área dos centros da fresa de ${format(regions.area_mm2)} mm²${plan.part_released?'. Envelope interno, com o raio da fresa contido na peça já solta.':fullContour?'. Os cortes seguem as formas 3D, bolsões e rebaixos por profundidade, inclusive abertos à borda.':`; faixa de planejamento de ${format(regions.offset_mm)} mm ao redor da peça.`}`;
  if(regions.manual_limits_applied)text+=' Keep In / Keep Out limitam essa área.';
  text+=' O envelope XY não representa remoção em todas as profundidades; a fresa também varre seu raio ao redor dos centros.';
  if(!fullContour&&plan.preparation_contours?.blocked>0)text+=' Limites manuais impedem preparar parte do exterior; Cutout terá passadas adicionais.';

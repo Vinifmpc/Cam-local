@@ -1,4 +1,4 @@
-"""Loopback-only CAM application. No controller/machine or G-code endpoint."""
+"""Loopback-only CAM application with a bounded GRBL profile transfer endpoint."""
 from concurrent.futures import ThreadPoolExecutor
 import argparse
 import copy
@@ -29,6 +29,7 @@ from grbl_post import export_grbl
 from mesh_geometry import place_stl,MAX_BYTES
 from command_control import CommandMailbox
 from machining_presets import PresetStore
+from grbl_controller import GrblController
 
 STATIC=ROOT/'work/cam-ui/static' if getattr(sys,'frozen',False) else Path(__file__).parent/'static'
 THREE=ROOT/'work/ui-runtime/node_modules/three'
@@ -41,6 +42,7 @@ class App:
         self.outputs=Path(outputs or ROOT/'outputs/CAM-local/projetos');self.outputs.mkdir(parents=True,exist_ok=True)
         self.tools_path=self.outputs.parent/'ferramentas.json'
         self.presets=PresetStore(self.outputs.parent/'machining-presets.json')
+        self.controller=GrblController(self.outputs.parent/'grbl-backups')
         self.presets.migrate_latest(self.outputs)
         if not self.tools_path.exists():
             ToolLibrary([Tool(id='flat-3_175',name='Topo reto Ø3,175 mm',diameter_mm=3.175,
@@ -168,6 +170,7 @@ class App:
         motion=result['motion']
         return {'moves':[[m['kind'],*m['start'],*m['end'],m.get('layer',-1),m.get('operation','roughing')] for m in motion['moves']],
             'timing':motion.get('timing'), 'durations_s':[m.get('duration_s') for m in motion['moves']],
+            'timing_profiles':[m.get('timing_profile') for m in motion['moves']],
             'feeds_mm_min':[m.get('feed_mm_min') for m in motion['moves']],
             'safe_z':motion['safe_z'],'initial':motion['initial_position'],
             'smart_plan':result.get('smart_plan'),
@@ -178,6 +181,8 @@ class App:
                 'selected_internal_indices':result[name].get('selected_internal_indices',[]),
                 'internal_contours_total':result[name].get('internal_contours_total',0),
                 'skipped_internal_contours':result[name].get('skipped_internal_contours',0),
+                'fixture_detour_moves':sum(bool(m.get('proof',{}).get('fixture_detour')) for m in result['operations'][name]['moves']),
+                'annular_pocket_layers':sum(bool(layer.get('annular_pocket')) for layer in result[name].get('layers',[])),
                 'rest_material':result[name].get('rest_material'),
                 'preparation_polyline_count':result[name].get('preparation_polyline_count',0),
                 'preparation_cutting_edges':result[name].get('preparation_cutting_edges',0),
@@ -187,6 +192,7 @@ class App:
                 'path_order':result['operations'][name].get('path_order','layer'),
                 'regions':result['operations'][name].get('region_schedule',{}).get('region_count',0),
                 'stay_down_entries':result['operations'][name].get('stay_down_entries',0),
+                'routed_stay_down_entries':result['operations'][name].get('routed_stay_down_entries',0),
                 'center_plunge_entries':result['operations'][name].get('center_plunge_entries',0),
                 'holes_count':len(result[name].get('holes',[])),
                 'helix_count':sum(h.get('strategy')=='helix' for h in result[name].get('holes',[])),
@@ -414,6 +420,11 @@ def handler_for(app):
                     return self.send(200,{'asset':asset})
                 if url.path=='/api/import-project':return self.send(200,app.restore(data))
                 record=json.loads(data)
+                if url.path=='/api/grbl/ports':return self.send(200,app.controller.ports())
+                if url.path=='/api/grbl/read':return self.send(200,app.controller.read(record))
+                if url.path=='/api/grbl/apply':return self.send(200,app.controller.apply(
+                    {'port':record.get('port'),'baudrate':record.get('baudrate',115200)},
+                    record.get('values'),record.get('read_id')))
                 if url.path=='/api/presets':return self.send(200,app.presets.update(record))
                 if url.path=='/api/commands/submit':return self.send(202,app.commands.submit(record['command'],record.get('timeout_s',30)))
                 if url.path=='/api/commands/next':return self.send(200,app.commands.next(record['client'],record.get('wait_s',20)))

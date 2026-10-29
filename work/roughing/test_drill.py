@@ -80,6 +80,50 @@ class DrillTests(unittest.TestCase):
         for a,b in zip(plan['moves'],plan['moves'][1:]):self.assertEqual(a['end'],b['start'])
         self.assertEqual(plan['final_position'][2],plan['safe_z'])
 
+    def test_fast_reentry_uses_only_this_holes_previously_cut_depth(self):
+        job,fast=self.generate(diameter=3.99,allow_helix=False,peck=.7,reentry_gap=.25)
+        _,slow=self.generate(diameter=3.99,allow_helix=False,peck=.7,rapid_reentry=False)
+        cuts=lambda plan:[(m['start'],m['end']) for m in plan['moves'] if m['kind']=='cut']
+        self.assertEqual(cuts(fast),cuts(slow))
+        floor=0.;rapid_count=0
+        for move in fast['moves']:
+            if move['kind']=='cut':floor=move['end'][2]
+            if move['proof'].get('drill_phase')=='cleared_reentry':
+                rapid_count+=1
+                self.assertEqual(move['start'][:2],move['end'][:2])
+                self.assertAlmostEqual(move['proof']['cleared_to_z'],floor)
+                self.assertGreaterEqual(move['end'][2],floor+.25-1e-9)
+        self.assertEqual(rapid_count,len(cuts(fast))-1)
+        distance=lambda plan:sum(math.dist(m['start'],m['end']) for m in plan['moves'] if m['kind']=='approach')
+        self.assertLess(distance(fast),distance(slow)/3)
+        self.assertEqual(validate_drill_motion(fast,job,plate())['status'],'passed')
+        forged=copy.deepcopy(fast)
+        move=next(m for m in forged['moves'] if m['proof'].get('drill_phase')=='cleared_reentry')
+        move['end'][2]=move['proof']['cleared_to_z']-.1
+        with self.assertRaises(ValueError):validate_drill_motion(forged,job,plate())
+
+    def test_short_retract_stays_vertical_but_leaves_every_hole_at_safe_height(self):
+        first=plate();second=plate().copy();second[:,:,0]+=20
+        mesh=np.concatenate([first,second])
+        job,plan=self.generate(mesh,diameter=3.99,allow_helix=False,peck=.7,
+            retract_mode='chip_break',retract_mm=.4,reentry_gap=.1)
+        self.assertEqual(len(job['holes']),2)
+        short=0
+        for move in plan['moves']:
+            if move['kind']=='retract' and move['end'][2]<plan['safe_z']-1e-9:
+                short+=1;self.assertAlmostEqual(move['end'][2]-move['start'][2],.4)
+                self.assertEqual(move['start'][:2],move['end'][:2])
+            if move['kind']=='travel' and math.dist(move['start'][:2],move['end'][:2])>1e-9:
+                self.assertGreaterEqual(min(move['start'][2],move['end'][2]),plan['safe_z'])
+        self.assertEqual(short,14)
+        self.assertEqual(plan['final_position'][2],plan['safe_z'])
+        self.assertEqual(validate_drill_motion(plan,job,mesh)['status'],'passed')
+
+    def test_retract_and_reentry_parameters_reject_invalid_values(self):
+        for kwargs in ({'retract_mode':'auto'},{'retract_mm':0},{'reentry_gap':0},
+                       {'reentry_gap':float('nan')},{'rapid_reentry':1},{'retract_mm':True}):
+            with self.subTest(kwargs=kwargs),self.assertRaises(ValueError):self.generate(**kwargs)
+
     def test_nominal_cutter_larger_than_stl_inradius_rejected(self):
         with self.assertRaisesRegex(ValueError,'mínimo'):self.generate(diameter=4.)
         with self.assertRaisesRegex(ValueError,'mínimo'):self.generate(diameter=5.)

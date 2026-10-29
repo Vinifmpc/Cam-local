@@ -18,6 +18,34 @@ Uma mudança efetiva passa pela inspeção real do STL, ajusta as profundidades 
 
 ## Uso rápido no PowerShell
 
+O modelo padrão de tempo é `operations.timing_model="acceleration"`. Em **Tempo e perfil da máquina**, informe `machine_max_rate_mm_min:[X,Y,Z]` (valores $110–$112), `machine_acceleration_mm_s2:[X,Y,Z]` ($120–$122), `machine_steps_per_mm:[X,Y,Z]` ($100–$102), `machine_junction_deviation_mm` ($11) e `machine_planner_blocks` (blocos úteis). Os padrões são [1500,1500,1500], [10,10,10], [400,400,400], 0,01 e 15. As fases de aceleração/frenagem e os cantos entram no tempo e na reprodução 1×. O resultado inclui totais por operação e perfis por movimento; `state.timing_ui` mostra o modo e os controles disponíveis. O campo antigo `rapid_mm_min` só altera o modelo `"constant"`; com aceleração, G0 usa os máximos por eixo. Editar o perfil exige recálculo e não modifica o G-code, os avanços, a geometria nem a configuração do GRBL. Pode ser salvo em presets e projetos.
+
+Transferência real para a controladora: `controller.ports` lista portas sem abri-las. `controller.read {port:"COM3",baudrate:115200}` consulta o estado e `$$`, mostra a leitura sem substituir a estimativa e fornece `read_id`. `controller.apply` grava os seis máximos/acelerações da tela; aceita `values:{machine_max_rate_mm_min:[...],machine_acceleration_mm_s2:[...]}` para um alvo explícito. Porta, baudrate e read_id podem ser omitidos após a leitura na mesma sessão. O GRBL precisa estar Idle; os valores anteriores são salvos em `%LOCALAPPDATA%/CAMLocal/grbl-backups` antes da escrita. A resposta registra verificação, alterações parciais e caminho do backup. Não há repetição automática após erro ou timeout. `controller.import` copia a leitura para a estimativa sem escrever na máquina; `state.controller` apresenta conexão, leitura e último resultado. A porta precisa estar livre no CNCjs e é liberada ao final. Esses comandos também funcionam sem um STL aberto. A conexão pode reiniciar certas placas USB; o aplicativo não envia reset, unlock, movimentos ou comandos do spindle.
+
+Para manter o CNCjs conectado, use o painel separado em `work/cncjs-widget/`, empacotado por `scripts/package_cncjs_widget.py`. Ele roda dentro do CNCjs e usa sua própria API autenticada, sem chamar os comandos `controller.*` de conexão USB do EXE. A leitura e a gravação são ações explícitas do painel, com proteção contra trabalho/filas ativos, backup local no navegador e releitura. A ativação por `install.html` acrescenta somente o widget ao layout daquele navegador. [Instalação e funcionamento](../work/cncjs-widget/README.md).
+
+Exemplo: `{"action":"config.patch","operations":{"timing_model":"acceleration","machine_acceleration_mm_s2":[10,10,10],"machine_max_rate_mm_min":[1500,1500,1500]}}`. Depois execute `calculate.start` e `calculate.wait`. A estimativa continua aproximada: não inclui atrasos de transmissão USB, espera do spindle ou pausas manuais, e assume origem alinhada aos passos. Os 15 blocos úteis correspondem ao buffer de 16 posições com uma reservada, coerente com o estado `Bf:15` informado.
+
+`operations.cutout_smoothing_mm` controla a fluidez do Cutout, entre 0 e 0,1 mm. O padrão 0 conserva as facetas do projeto; 0,01 mm reduz microsegmentos por uma aproximação conservadora que pode deixar essa pequena sobra. A região protegida original precisa estar contida na nova, a nova precisa caber no limite de desvio, e os contornos devem preservar identidade e topologia. Se alguma prova falhar, usa o contorno original. O controle “Fluidez do contorno” fica na aba Cutout e acompanha presets/projetos. A exportação recompõe as mesmas provas a partir do STL e relê o NC. O pós elimina palavras modais repetidas (XYZ/F/G0/G1), mantendo cada movimento e sua precisão.
+
+`config.patch` aceita `settings.strategy="hybrid"` para o **3D eficiente**, padrão em novas importações sem preferências salvas. Reconhece pisos horizontais do STL, redistribui camadas sem exceder o Stepdown, agrupa o contato em faixas elevadas por até `surface_error_mm` (padrão 0,15 mm) e simplifica contornos dentro da área permitida por até `path_tolerance_mm` (0,02 mm). O contato OpenCAMLib é reamostrado depois da simplificação. A sobra adicional em Z soma-se ao sobremetal axial e é relativa ao envelope conservador de contato, não uma garantia de sobra em cantos inacessíveis à fresa. Passadas raster só são omitidas quando o volume varrido já foi comprovadamente removido por passadas anteriores. Os dois ajustes ficam nos presets e em “Precisão do 3D eficiente” na aba Rough. Projetos antigos mantêm sua estratégia até uma alteração explícita.
+
+`settings.optimize_entries` (padrão `true`) permite ao 3D eficiente comparar a rampa com uma entrada vertical pelos avanços reais configurados. A entrada vertical só é escolhida se for mais rápida que o menor comprimento possível de rampa, a ferramenta estiver confirmada como cortante pelo centro no inteligente e a profundidade no material não exceder um Stepdown comprovado. Sem confirmação, mantém rampas. Desmarcar “Escolher a entrada mais rápida” conserva a política anterior de rampas, incluindo o recurso a mergulho confirmado quando a rampa não cabe. A exportação confere os avanços usados na decisão; o pós usa o Plunge rate configurado.
+
+Eficiência: `config.patch` aceita `settings.strategy="planar"` para Rough bruto em alturas constantes e `"conformal"` para acompanhar a superfície. Aproximações verticais do Rough/Cutout percorrem em G0 a coluna já comprovadamente livre e mantêm a entrada final com avanço. Drill oferece `operations.drill_retract_mode` (`"full"` ou `"chip_break"`), `drill_retract_mm`, `drill_rapid_reentry` e `drill_reentry_gap_mm`. O modo completo continua retirando cavacos a cada mergulho; o curto sobe somente a distância configurada, mas sai à altura segura antes de mudar de furo. O rápido de retorno só percorre o cilindro já furado, parando antes do fundo anterior. Opções ficam salvas nos presets. `rapid_mm_min` ajusta apenas a estimativa; a máquina controla os G0 pelos seus próprios limites.
+
+`cutout.depth` recebe `depth_mm` como profundidade total positiva do recorte, medida a partir do topo do bruto. Exemplo: `{"action":"cutout.depth","depth_mm":17.3}`. No inteligente, converte o total em corte extra abaixo do fundo declarado do bruto (ou fundo do STL quando automático), mantendo o limite do Rough. O comprimento de corte da fresa continua sendo validado. `state.depth_ui` informa os valores exibidos e se o campo está habilitado.
+
+Para uma peça já recortada, selecione **Manual → Cutout → Contornos do Cutout → Somente internos · peça já recortada**. O percurso usa apenas os contornos internos passantes da silhueta, com compensação do raio da fresa, rampas e camadas; não acrescenta o perfil externo. Rebaixos com fundo continuam sendo trabalho do Rough. Sem internos ou se a fresa não couber em algum deles, o cálculo informa o problema, sem trocar para recorte externo. Rough e Drill continuam com sua ativação independente; desative-os para executar somente o recorte interno. A opção acompanha projetos e presets. `state.cutout_ui` mostra seleção, disponibilidade e orientação da tela.
+
+Exemplo por comando, sem mudar a posição nem as profundidades atuais:
+
+```json
+{"action":"config.patch","operations":{"machining_mode":"manual","roughing_enabled":false,"drill_enabled":false,"cutout_enabled":true,"cutout_contours":"internal"}}
+```
+
+Depois execute `calculate.start`, `calculate.wait` e `nc.export`. `external` mantém somente o exterior; `all` faz internos + exterior. O modo inteligente continua destinado a Rough + recorte para soltar a peça inteira.
+
 Na pasta deste executável:
 
 ```powershell
@@ -46,6 +74,18 @@ perfil separado, útil para ensaios sem mudar o projeto nem a biblioteca usuais.
 `schema` funciona mesmo com o aplicativo fechado e lista ações/campos válidos.
 
 ## Modo inteligente Rough + Cutout
+
+Marque **Peça já solta · usinar somente o interior** para trabalhar uma peça que já foi recortada. O Rough usa um envelope interno com o raio da fresa contido no contorno externo, segue rebaixos e bolsões e respeita os Keep In / Keep Out existentes. Não cria canal externo nem pele de retenção. A orientação, o zero e a fixação não são alterados. O plano pode escolher recortes internos passantes vantajosos; eles também precisam caber nos limites e evitar a fixação. Sem internos selecionados, não há operação Cutout no resultado. Uma operação Drill que atravesse a área protegida é rejeitada antes do Rough.
+
+```json
+{"action":"config.patch","operations":{"machining_mode":"smart","smart_part_released":true}}
+```
+
+Confira com `machining.plan`, depois `calculate.start` e `calculate.wait`. `part_released:true`, `exterior_strategy.mode:"interior_only"`, `release_contours:"none"` ou `"automatic_internal_only"` e `sequence` mostram a decisão real. `state.smart_ui` apresenta o checkbox e sua orientação na tela. Projetos e presets guardam `smart_part_released`; o padrão `false` conserva o plano para desbastar e soltar do bruto. **Preparar fixação** marca a condição de peça já solta para a próxima ativação do modo inteligente, mantendo a orientação atual por padrão.
+
+Nesse modo, as travessias também contornam os Keep Out em XY, mesmo acima da altura declarada da fixação. O desvio considera o raio da fresa e confere os pontos arredondados para o NC; a exportação refaz essa validação. `fixture_travel` no plano descreve a política e `fixture_detour_moves` no resumo de cada operação conta os trechos desviados. Um ponto de travessia dentro da própria fixação é rejeitado; não há retorno silencioso a uma travessia reta bloqueada.
+
+Em **Camadas simples**, rebaixos anulares podem usar contornos fechados em vez de centenas de segmentos raster. A substituição exige menor comprimento de corte e menos entradas, contornos dentro da área permitida e prova de cobertura por varreduras conservadoras da ferramenta. A sobra XY adicional fica limitada pelo desvio de percurso configurado, até 1% do diâmetro. Tolerância insuficiente, geometria incompatível ou contornos fragmentados pela avaliação de contato mantêm o método anterior. O Rough continua usinando o rebaixo; feeds, Stepdown, zero e Keep Out são preservados. `annular_pocket_layers` informa quantas camadas utilizaram essa estratégia.
 
 O Rough deriva automaticamente o domínio do STL, incluindo as cavidades internas e respeitando concavidades. `machining.plan` fornece `automatic_regions` (domínio dos centros da fresa), `exterior_strategy` (distribuição entre Rough e Cutout e diagnóstico da geometria) e `preparation_contours`. A política `features_then_cutout` deixa os rebaixos, bolsões e formas 3D no Rough e o perfil completo em camadas no Cutout; `preparation_contours.not_required:true` indica que não foi acrescentado canal externo ao Rough. Não equivale a uma única passada de profundidade total. Rough sem geometria a remover pode ter zero movimentos. O mapa AUTO ciano usa a mesma camada `view.layers.regions`; `state.view.automatic_regions` informa sua visibilidade. `state` omite os vértices automáticos por padrão; `detail:true` os inclui.
 
@@ -203,7 +243,13 @@ PNG no `path` solicitado, sem capturar a tela do computador.
 `simulation.set`: `mode` = `paths` ou `stock`; `speed` = 1 para o feedrate real,
 2 para 2×, 3 para 3×; `layers` aceita `model`, `paths`, `rapids`, `regions`.
 `simulation.seek` aceita `time_s` ou `fraction` de 0 a 1. Para consultar a remoção
-concluída, use `simulation.wait` com `surface:grid` ou `surface:solid`. A reprodução
+concluída, use `simulation.wait` com `surface:grid` ou `surface:solid`. `surface:final`
+espera somente a superfície final preparada em segundo plano, sem avançar a barra
+nem trocar a vista. `state.simulation.solid_precompute` informa estado/progresso;
+`solid_cache` informa construções, acertos e memória do cache. `solid_volume_mm3`
+é o volume restante da superfície sólida da posição atual, quando disponível.
+O resultado final e posições já visitadas são reaproveitados ao voltar na barra;
+posições novas ainda podem exigir uma primeira reconstrução. A reprodução
 pausa se a janela for ocultada/minimizada, como no uso manual. Seek e reconstrução
 podem ser comandados diretamente, sem aguardar a reprodução.
 
@@ -232,7 +278,7 @@ importação opcional, cálculo real, exportação, remoção na grade, ZIP e re
 
 ## Presets de usinagem
 
-Os últimos ajustes são gravados automaticamente no perfil local e restaurados ao reabrir, sem carregar uma peça. Presets nomeados ficam separados dos últimos ajustes: editar um campo não substitui o preset salvo.
+Os últimos ajustes são gravados automaticamente no perfil local e restaurados ao reabrir, sem carregar uma peça. As edições de usinagem, incluindo aceleração XYZ, atualizam automaticamente o preset selecionado. Sem preset selecionado, ficam apenas nos últimos ajustes. Abrir um projeto ou exemplo não sobrescreve o preset: é preciso editar os ajustes. Antes de trocar de preset, edições pendentes são salvas no anterior.
 
 ```json
 {"action":"presets.list"}
@@ -243,7 +289,7 @@ Os últimos ajustes são gravados automaticamente no perfil local e restaurados 
 {"action":"presets.remember"}
 ```
 
-O preset inclui o snapshot da ferramenta, feedrates de Rough/Cutout/Drill, plunge, rápido, RPM, stepdown, stepover em porcentagem, rampa e opções das operações. A confirmação de corte pelo centro é salva junto da ferramenta e é desmarcada ao trocar de ferramenta. Ao aplicar em um projeto, o posicionamento, as regiões, os limites do bruto e as profundidades finais da peça são preservados.
+O preset inclui o snapshot da ferramenta, feedrates de Rough/Cutout/Drill, plunge, rápido, RPM, stepdown, stepover em porcentagem, rampa, perfil de tempo (máximos, acelerações XYZ, passos/mm e junções) e opções das operações. A confirmação de corte pelo centro é salva junto da ferramenta e é desmarcada ao trocar de ferramenta. Ao aplicar em um projeto, o posicionamento, as regiões, os limites do bruto e as profundidades finais da peça são preservados.
 
 O arquivo `machining-presets.json` fica ao lado de `ferramentas.json` no perfil (`%LOCALAPPDATA%/CAMLocal` por padrão). Perfis de teste isolados usam seus próprios presets. Atualizações de versões antigas recuperam os ajustes do projeto local mais recente, sem abrir seu STL.
 
@@ -258,12 +304,14 @@ O zero G54 é a referência das coordenadas do projeto. Selecionar uma borda ape
 {"action":"placement.reference","point_mm":[20.3,7],"snap":true}
 {"action":"placement.action","kind":"origin_point","point_mm":[20,7,0],"axes":"xy"}
 {"action":"placement.action","kind":"origin_point","point_mm":[0,0,2],"axes":"z"}
-{"action":"placement.second_side","axis":"x","fixture":{"diameter_mm":20,"height_mm":3}}
+{"action":"placement.second_side","fixture":{"diameter_mm":20,"height_mm":3}}
 ```
 
 `placement.outline` devolve os contornos externos projetados do STL já posicionado. `placement.reference` aproxima o par XY à borda por projeção no segmento; `snap:false` aceita o ponto informado diretamente. `placement.pick` mostra a vista de topo e realça o contorno para selecionar com o mouse. Os nove pontos da caixa e as referências Topo/Meio/Base continuam disponíveis.
 
-`placement.second_side` é explícito e exige as dimensões da fixação: `diameter_mm` é o diâmetro do círculo a proteger no centro da caixa da peça; `height_mm` é a altura da fixação acima do topo da peça após virar. O eixo de giro pode ser `x` ou `y`, sempre 180°. A operação muda para Manual, ativa só Rough, usa `domain_mode:silhouette`, remove as regiões da primeira face e cria o Keep Out central circunscrito. A travessia passa acima do topo declarado da fixação mais a folga configurada. Escolha a referência da segunda face depois do giro; a alteração do zero preserva essa nova fixação.
+`placement.second_side` exige as dimensões da fixação: `diameter_mm` é o diâmetro do círculo a proteger no centro da caixa da peça; `height_mm` é a altura da fixação acima do topo do bruto. O padrão `axis:"current"` mantém a orientação, o zero, as profundidades, o bruto e os limites Keep In atuais, inclusive se a peça já foi invertida em X/Y. Preparar novamente não vira a peça. A operação substitui os Keep Out pelo círculo central circunscrito. Fora de Inteligente + peça já solta, muda para Manual e ativa só Rough em `domain_mode:silhouette`. Percursos anteriores são invalidados; Desfazer posição recupera o estado anterior.
+
+Somente `axis:"x"` ou `axis:"y"` aplica um giro adicional de 180°, com reajuste de profundidades e regiões para a nova face. Na interface, **Preparar fixação** usa **Manter orientação atual** por padrão; depois de um giro explícito, a seleção volta a esse padrão para evitar uma segunda inversão acidental. Se Inteligente e Peça já solta já estão ativos, preparar a fixação mantém esse modo; nos demais casos, prepara Rough manual na silhueta. `state.placement_ui.second_side` mostra a seleção e os campos da fixação. A travessia passa acima do topo declarado da fixação mais a folga configurada. Confira a referência da segunda face; mudar o zero preserva essa nova fixação.
 
 A seleção do zero não comanda homing nem altera offsets no controlador: o NC contém G54 e usa as coordenadas do projeto. A referência física correspondente deve ser definida na CNC. A simulação não importa o bruto restante da primeira face.
 
@@ -283,3 +331,13 @@ A seleção do zero não comanda homing nem altera offsets no controlador: o NC 
 `placement.reference` continua apenas preenchendo o ponto personalizado. Com `magnet_mm > 0`, ele atrai aos pontos laterais alinhados que pertençam ao contorno externo real. O padrão é zero. Na seleção com o mouse, a atração usa 14 pixels da vista; Alt desativa a atração. Centro e pontos da caixa fora do contorno nunca atraem a seleção de borda.
 
 `state detail:true` inclui `placement_ui.reference.automatic_points`; `automatic_anchor` identifica a referência ativa. As linhas tracejadas na vista mostram os eixos centrais. O painel principal prioriza os cinco botões; caixa/cantos e seleção manual ficam em opções recolhidas.
+
+Editor de ferramenta: tool.editor com mode:open abre o formulário real, mode:set preenche values com os nomes dos campos da ferramenta, mode:state retorna textos e validade nativa, mode:save valida e grava pela mesma função do botão, e mode:close fecha sem salvar. Exemplo: {"action":"tool.editor","mode":"set","values":{"cutting_length_mm":"22"}}. Uma string vazia apaga o campo; valores ainda inválidos permanecem como rascunho e não alteram a biblioteca. Campos numéricos contínuos aceitam decimais sem exigir múltiplos de um incremento; os limites e os campos inteiros continuam sendo validados.
+
+Simulação GPU: state.simulation.gpu informa backend, placa/driver expostos pelo WebGL, resolução, fundo físico, memória e target. simulation.wait aceita surface:gpu sem esperar a grade CPU. simulation.sample aceita surface:gpu para ler até 64 células; o padrão continua grid. O campo center_mm identifica a amostra exata. simulation.benchmark aceita fractions e repeats (até 32 quadros): completed_ms inclui desenho e uma sincronização gl.finish explícita; last_seek_ms mede apenas a submissão dos comandos. O benchmark restaura a vista e a posição. Nenhuma sincronização ou leitura integral da GPU ocorre na reprodução normal.
+
+Ligações baixas: na prioridade region_first, o Rough tenta desvios curtos por cortes já concluídos quando a reta de ligação não tem prova de folga. O resumo de cálculo em motion_summary.operations.roughing informa stay_down_entries e routed_stay_down_entries; o segundo conta as ligações que precisaram de desvio. Não reduz o clearance configurado nem usa o simulador para autorizar o corte.
+
+Giro de 45 graus: placement.action aceita {"kind":"rotate","axis":"x","angle_deg":45} (ou y, valor -45 para o sentido inverso). Os botões ±45° ficam no painel Girar da vista 3D para X/Y. turns continua sendo um inteiro de quartos de volta, compatível com os botões de 90°. Não combine turns e angle_deg. A inspeção do STL, o ajuste das referências e o desfazer são os mesmos dos giros anteriores.
+
+Para girar a peça plana como um ponteiro de relógio, use placement.action kind:rotate, axis:z, angle_deg:45 ou -45. Esse giro conserva o centro e os limites Z, sem reposicionar a caixa para o canto mínimo. X/Y inclinam a peça.

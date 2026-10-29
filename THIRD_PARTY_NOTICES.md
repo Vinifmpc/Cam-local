@@ -6,6 +6,7 @@ A licença MIT na raiz cobre o código original do CAM Local. Dependências mant
 | --- | --- | --- |
 | NumPy | 2.3.5 | BSD e avisos incluídos na distribuição; [fonte](https://github.com/numpy/numpy) |
 | pyclipr / Clipper2 | 0.1.8 | Boost Software License 1.0; [fonte](https://github.com/drlukeparry/pyclipr) |
+| pySerial | 3.5 | BSD-3-Clause; [fonte](https://github.com/pyserial/pyserial/tree/v3.5) |
 | OpenCAMLib, pacote Node | 2023.1.11 | O manifest npm declara LGPL-3.0; o tag upstream inclui também COPYING LGPL-2.1. Textos preservados; [fonte correspondente](https://github.com/aewallin/opencamlib/tree/2023.01.11) |
 | Three.js | 0.180.0 | MIT; [fonte](https://github.com/mrdoob/three.js/tree/r180) |
 | Manifold | 3.5.4 | Apache-2.0; [fonte](https://github.com/elalish/manifold) |

@@ -11,13 +11,17 @@ O aplicativo começa com a área de trabalho vazia. **Abrir STL** importa uma pe
 - Posicionamento na própria vista 3D: ícones para girar, origem XY em nove pontos, origem Z, deslocamento em mm e desfazer posição.
 - Zero de trabalho G54 na borda: seleção do contorno no modelo ou coordenadas manuais, com XY/Z independentes e preservação das regiões ao mudar a referência.
 - Zero XY em um clique: Esquerda, Direita, Frente, Trás ou Centro, pelos limites do STL e pelo eixo central. Seleção manual com atração aos pontos alinhados.
-- Segunda face para peça já recortada: giro em X/Y, apenas Rough na silhueta e proteção circular da fixação central com altura de travessia declarada.
+- Segunda face: preparo da fixação central mantendo a orientação atual por padrão; giro adicional em X/Y é uma escolha explícita.
+- Inteligente para peça já solta: Rough interno e recortes internos vantajosos, sem recorte externo; travessias contornam Keep Out.
+- Contornos contínuos para rebaixos anulares em camadas simples, quando as provas geométricas e a comparação de custo permitem.
 - Drill com comparação entre fresa e furo; hélice opcional para furos maiores.
 - Lista de operações com ativação e ordenação no modo manual.
 - Rampas, ligações em áreas removidas e validação independente antes da exportação.
 - Simulação de remoção em grade e reconstrução de superfície, com reprodução pelo feedrate e velocidades 2×, 3× e outras.
 - Controle da aplicação por comandos JSON, sem automação de mouse.
 - Presets nomeados de ferramenta, avanços, plunge, RPM e ajustes de corte; últimos valores restaurados automaticamente ao reabrir, com a área de trabalho vazia.
+- Perfil de tempo com aceleração e transferência explícita dos máximos e acelerações XYZ ao GRBL por USB, com leitura, backup e verificação.
+- [Painel opcional para CNCjs](work/cncjs-widget/README.md): usa a conexão já aberta no CNCjs para ler e gravar esse perfil, sem alternar a porta USB entre aplicativos.
 
 ## Rodar pelo código
 
@@ -39,13 +43,15 @@ O resultado fica em `dist/CAM-local-Windows/`. Dependências são instaladas pel
 ## Usar
 
 1. Abra um STL e use **Girar**, **Zero** e **Mover** na vista 3D. Em **Zero**, clique em **Esquerda**, **Direita**, **Frente**, **Trás** ou **Centro** para definir XY automaticamente; o Z é independente. As referências usam os extremos exatos e o centro da caixa da peça: Esquerda combina X mínimo com Y central, por exemplo. A seleção de outro ponto e a digitação ficam nas opções manuais; Alt libera a atração aos pontos alinhados. As opções completas de unidade continuam disponíveis no painel Mover.
-2. Confira diâmetro, comprimento de corte, avanços e RPM da ferramenta. Em **Presets de usinagem**, escolha um preset ou use **＋ Salvar** para cadastrar seus ajustes. **Atualizar preset** substitui o selecionado; as edições comuns ficam nos últimos ajustes automáticos.
+2. Confira diâmetro, comprimento de corte, avanços e RPM da ferramenta. Em **Presets de usinagem**, escolha um preset ou use **＋ Salvar** para cadastrar seus ajustes. As edições, incluindo aceleração XYZ, são salvas automaticamente no preset selecionado. Sem seleção, ficam nos últimos ajustes automáticos; **Salvar agora** conclui a gravação imediatamente.
 3. Escolha as operações. No modo inteligente, os detalhes ficam no Rough; internos vantajosos são recortados antes de soltar o exterior.
 4. Calcule e simule os percursos; depois exporte o NC.
 
-Para uma peça já recortada, **Girar → Segunda face** solicita o diâmetro da área central protegida e a altura da fixação acima do topo da peça. **Preparar** vira o modelo em X ou Y, cria o Keep Out central e ativa só Rough na silhueta. Escolha o zero na borda e use Keep In para delimitar os detalhes necessários. O simulador continua usando um bruto em grade; não reconstrói automaticamente o material removido na primeira face. O zero G54 do arquivo deve corresponder à referência usada na CNC.
+Para uma peça já recortada, **Girar → Segunda face** solicita o diâmetro da área central protegida e a altura da fixação. **Preparar fixação** mantém a orientação atual por padrão e cria o Keep Out central. Um giro adicional em X/Y deve ser selecionado explicitamente. No inteligente, marque **Peça já solta · usinar somente o interior** para manter o exterior fora do plano. O simulador não reconstrói automaticamente o bruto restante da primeira face. O zero G54 do arquivo deve corresponder à referência usada na CNC.
 
-O motor é experimental, aceita fresa de topo reto e não se conecta à CNC. A simulação não verifica haste, porta-ferramenta ou fixação. O Cutout segue a silhueta projetada, sem acabamento 3D de superfícies inferiores. Tempos são estimativas por velocidade constante. Consulte [limitações e geometria](docs/ARQUITETURA.md).
+Em **Tempo e perfil da máquina → GRBL por USB**, libere a conexão serial no CNCjs, escolha a porta e clique em **Ler do GRBL**. A leitura mostra os valores reais sem substituir o perfil editado. **Gravar no GRBL** transfere somente os máximos $110–$112 e as acelerações $120–$122; exige estado Idle, salva os valores anteriores e confirma por releitura. **Usar na estimativa** copia a leitura para os campos do CAM. A conexão é liberada ao terminar. Algumas placas reiniciam ao abrir a porta USB; confira o estado e a referência antes de retomar o CNCjs.
+
+O motor é experimental e aceita fresa de topo reto. A conexão GRBL é limitada ao perfil da máquina; o aplicativo não envia percursos nem comanda movimentos. A simulação não verifica haste, porta-ferramenta ou fixação. O Cutout segue a silhueta projetada, sem acabamento 3D de superfícies inferiores. O tempo considera aceleração e redução nos cantos, com um modo legado de velocidade constante. Consulte [limitações e geometria](docs/ARQUITETURA.md).
 
 ## Desenvolvimento
 

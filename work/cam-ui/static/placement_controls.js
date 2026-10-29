@@ -1,4 +1,4 @@
-// Right-angle rotations and visual datum anchors. Backend inspection remains
+// Discrete rotations and visual datum anchors. Backend inspection remains
 // the authority for the transformed STL, dimensions and machining setup.
 import {roundPolygon} from './region_shapes.js';
 const IDENTITY=[[1,0,0],[0,1,0],[0,0,1]];
@@ -65,9 +65,16 @@ export function placementAction(current,mesh,triangles,action){
   if(action.kind==='reset')rotation=transpose(result.rotation);
   else{
    const axis=action.kind==='flip'?'x':action.axis,turns=action.kind==='flip'?2:action.turns;
-   if(!Object.hasOwn(QUARTER,axis)||!Number.isInteger(turns)||Math.abs(turns)>4)throw Error('Use X, Y ou Z e incrementos inteiros de 90°.');
-   rotation=IDENTITY;
-   for(let i=0;i<((turns%4)+4)%4;i++)rotation=multiply(QUARTER[axis],rotation);
+   if(!Object.hasOwn(QUARTER,axis))throw Error('Escolha o eixo X, Y ou Z.');
+   if(action.kind==='rotate'&&action.angle_deg!==undefined){
+    if(![-45,45].includes(action.angle_deg)||action.turns!==undefined)throw Error('Informe angle_deg de -45 ou 45, sem turns.');
+    const c=Math.SQRT1_2,s=Math.sign(action.angle_deg)*c;
+    rotation={x:[[1,0,0],[0,c,-s],[0,s,c]],y:[[c,0,s],[0,1,0],[-s,0,c]],z:[[c,-s,0],[s,c,0],[0,0,1]]}[axis];
+   }else{
+    if(!Number.isInteger(turns)||Math.abs(turns)>4)throw Error('Use incrementos inteiros de 90° ou angle_deg de -45/45.');
+    rotation=IDENTITY;
+    for(let i=0;i<((turns%4)+4)%4;i++)rotation=multiply(QUARTER[axis],rotation);
+   }
   }
   if(!triangles?.length||triangles.length%3!==0)throw Error('Vértices da peça indisponíveis.');
   const center=lo.map((v,i)=>(v+hi[i])/2);
@@ -80,8 +87,9 @@ export function placementAction(current,mesh,triangles,action){
    for(let j=0;j<3;j++){lower[j]=Math.min(lower[j],point[j]);upper[j]=Math.max(upper[j],point[j]);}
   }
   const origin=placementOrigin(mesh.bounds_mm);
-  if(origin.xy)for(let i=0;i<2;i++)result.translation_mm[i]-=anchor(lower[i],upper[i],origin.xy[i]);
-  if(origin.z)result.translation_mm[2]-=anchor(lower[2],upper[2],{top:1,center:.5,bottom:0}[origin.z]);
+  const spinOnTable=action.kind==='rotate'&&action.axis==='z'&&action.angle_deg!==undefined;
+  if(origin.xy&&!spinOnTable)for(let i=0;i<2;i++)result.translation_mm[i]-=anchor(lower[i],upper[i],origin.xy[i]);
+  if(origin.z&&!spinOnTable)result.translation_mm[2]-=anchor(lower[2],upper[2],{top:1,center:.5,bottom:0}[origin.z]);
  }else throw Error('Ação de posicionamento desconhecida.');
  return result;
 }
@@ -132,10 +140,11 @@ export function secondSideState(state,fixture){
  if(!fixture||!Number.isFinite(fixture.diameter_mm)||fixture.diameter_mm<.1||!Number.isFinite(fixture.height_mm)||fixture.height_mm<0)throw Error('Informe diâmetro da área protegida (mínimo 0,1 mm) e altura da fixação acima da peça.');
  const b=state.mesh.bounds_mm,center=b.minimum.slice(0,2).map((v,i)=>(v+b.maximum[i])/2);
  const exclusion=roundPolygon(center,fixture.diameter_mm/2,undefined,'keepout');
+ const smartReleased=state.operations.machining_mode==='smart'&&state.operations.smart_part_released===true;
  return {...state,settings:{...state.settings,domain_mode:'silhouette',
   exclusions_mm:[exclusion],obstacle_top_mm:state.settings.stock_top_mm+fixture.height_mm},operations:{...state.operations,
-  machining_mode:'manual',roughing_enabled:true,cutout_enabled:false,drill_enabled:false,
-  order:'roughing_then_cutout',operation_sequence:['roughing','drill','cutout'],smart_stock_bottom_mm:null}};
+  machining_mode:smartReleased?'smart':'manual',smart_part_released:true,roughing_enabled:true,cutout_enabled:smartReleased,drill_enabled:false,
+  order:'roughing_then_cutout',operation_sequence:['roughing','drill','cutout'],smart_stock_bottom_mm:smartReleased?state.operations.smart_stock_bottom_mm:null}};
 }
 
 export function samePlacement(candidate,current,mesh){

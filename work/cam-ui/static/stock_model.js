@@ -8,6 +8,14 @@ export function activeStockBottom(roughingEnabled,roughBottom,cutoutEnabled,cuto
  if(!depths.length||!depths.every(Number.isFinite))throw Error('Defina a profundidade das operações ativas.');
  return Math.min(...depths);
 }
+// Cutting depth is not stock thickness. A shallow pocket must keep the stock
+// beneath it; breakthrough may extend below the physical bottom for display.
+export function visualStockConfig(config,modelBottom,explicitBottom=null){
+ const bottom=explicitBottom??modelBottom;
+ if(!Number.isFinite(bottom)||!Number.isFinite(modelBottom)||bottom>modelBottom+1e-8||bottom>=config.top)throw Error('Fundo físico do bruto inválido.');
+ return {...config,bottom:Math.min(config.bottom,bottom),physical_bottom:bottom,
+  physical_bottom_source:explicitBottom===null?'stl':'configured'};
+}
 // The row stride is part of the mesh topology, even when nx*ny is unchanged.
 export function stockGridIndices(nx,ny){
  const indices=[];
@@ -63,7 +71,7 @@ export class StockModel{
  }
  reset(){this.heights.fill(this.c.top);this.hit.fill(0);this.volume=0;this.protectedCount=0;this.belowBottom=0;}
  apply(m){
-  if(['travel','retract','clearance_adjust'].includes(m[0]))return;
+  if(['travel','retract','clearance_adjust','approach_rapid'].includes(m[0]))return;
   const ax=m[1],ay=m[2],az=m[3],bx=m[4],by=m[5],bz=m[6];
   if(![ax,ay,az,bx,by,bz].every(Number.isFinite))throw Error('Movimento não finito.');
   const r=this.c.diameter/2,r2=r*r,dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy;

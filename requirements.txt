@@ -1,5 +1,6 @@
 numpy==2.3.5
 pyclipr==0.1.8
+pyserial==3.5
 pywebview==6.2.1
 pythonnet==3.2.1; sys_platform == 'win32'
 clr-loader==0.3.1; sys_platform == 'win32'

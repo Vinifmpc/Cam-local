@@ -57,6 +57,19 @@ class MotionPlannerTests(unittest.TestCase):
         self.assertEqual(second[0]['end'][2],-1)
         self.assertIsNotNone(second[0]['proof']['source_cut_move'])
 
+    def test_rapid_approach_stops_above_proved_floor_and_rejects_new_material(self):
+        job=job_for_layers([[[[0,0,-1],[5,0,-1]]],[[[0,0,-2],[5,0,-2]]]])
+        plan=plan_ramps_and_links(job,self.mesh,approach_gap=.25)
+        approaches=[m for m in plan['moves'] if m['kind']=='approach_rapid']
+        self.assertEqual([m['end'][2] for m in approaches],[.25,-.75])
+        self.assertTrue(all(m['start'][:2]==m['end'][:2] for m in approaches))
+        for axis in (0,2):
+            forged=copy.deepcopy(plan);move=next(m for m in forged['moves'] if m['kind']=='approach_rapid' and m.get('layer')==1)
+            move['end'][axis]+=.1 if axis==0 else -.5
+            forged['moves'][move['id']+1]['start']=move['end'].copy()
+            with self.subTest(axis=axis),self.assertRaisesRegex(MotionPlanningError,'clearance proof'):
+                validate_motion(forged,job)
+
     def test_deeper_crossing_track_refreshes_a_shallow_cached_entry_vertex(self):
         job=job_for_layers([[[[0,0,-.5],[5,0,-.5]],
                              [[-1,0,-1],[6,0,-1]],

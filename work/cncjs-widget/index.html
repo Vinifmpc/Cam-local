@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>CAM · Perfil GRBL</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<main>
+  <header class="widget-heading"><div><span class="eyebrow">CAM LOCAL · CNCJS</span><h1>Perfil GRBL</h1></div><span id="connectionBadge" class="badge" data-state="offline">Aguardando CNCjs</span></header>
+  <p class="connection-line"><span id="connectionPort">Sem porta selecionada</span><span id="machineState">—</span></p>
+  <section aria-labelledby="targetTitle">
+    <div class="section-heading"><h2 id="targetTitle">Valores para gravar</h2><span>$110–112 · $120–122</span></div>
+    <table class="profile-table"><thead><tr><th scope="col">Eixo</th><th scope="col">Máximo <small>mm/min</small></th><th scope="col">Aceleração <small>mm/s²</small></th></tr></thead><tbody>
+      <tr><th scope="row"><span class="axis">X</span></th><td><input id="maximumX" type="number" min=".001" max="1000000" step="1" value="1500" inputmode="decimal" aria-label="Máximo X em milímetros por minuto"></td><td><input id="accelerationX" type="number" min=".001" max="1000000" step="1" value="80" inputmode="decimal" aria-label="Aceleração X em milímetros por segundo ao quadrado"></td></tr>
+      <tr><th scope="row"><span class="axis">Y</span></th><td><input id="maximumY" type="number" min=".001" max="1000000" step="1" value="1500" inputmode="decimal" aria-label="Máximo Y em milímetros por minuto"></td><td><input id="accelerationY" type="number" min=".001" max="1000000" step="1" value="80" inputmode="decimal" aria-label="Aceleração Y em milímetros por segundo ao quadrado"></td></tr>
+      <tr><th scope="row"><span class="axis">Z</span></th><td><input id="maximumZ" type="number" min=".001" max="1000000" step="1" value="1500" inputmode="decimal" aria-label="Máximo Z em milímetros por minuto"></td><td><input id="accelerationZ" type="number" min=".001" max="1000000" step="1" value="100" inputmode="decimal" aria-label="Aceleração Z em milímetros por segundo ao quadrado"></td></tr>
+    </tbody></table>
+    <div class="actions"><button id="readProfile" type="button" disabled>Ler do GRBL</button><button id="applyProfile" class="primary" type="button" disabled>Gravar no GRBL</button></div>
+    <p class="hint">Usa a conexão aberta pelo CNCjs. A gravação exige Idle e leitura recente; editar os campos não altera a máquina.</p>
+  </section>
+  <section class="readback" aria-labelledby="actualTitle">
+    <div class="section-heading"><h2 id="actualTitle">Última leitura do GRBL</h2><button id="useReadback" class="text-button" type="button" disabled>Usar valores lidos</button></div>
+    <table class="actual-table"><thead><tr><th scope="col">Eixo</th><th scope="col">Máximo <small>mm/min</small></th><th scope="col">Aceleração <small>mm/s²</small></th></tr></thead><tbody>
+      <tr><th scope="row">X</th><td id="actualMaximumX">—</td><td id="actualAccelerationX">—</td></tr>
+      <tr><th scope="row">Y</th><td id="actualMaximumY">—</td><td id="actualAccelerationY">—</td></tr>
+      <tr><th scope="row">Z</th><td id="actualMaximumZ">—</td><td id="actualAccelerationZ">—</td></tr>
+    </tbody></table>
+  </section>
+  <div id="controllerStatus" class="status" role="status" aria-live="polite" data-state="idle">Aguardando a conexão do CNCjs. Nenhum valor será gravado automaticamente.</div>
+  <p id="writtenSettings" class="hint" hidden></p>
+  <p id="uiFeedback" class="feedback" role="status" aria-live="polite" hidden></p>
+  <details id="backupPanel" hidden><summary>Backup da configuração anterior</summary><p class="hint">Os valores anteriores e o resultado da gravação ficam neste JSON. Copie o texto se o CNCjs bloquear o download.</p><textarea id="backupJson" rows="7" readonly spellcheck="false" aria-label="Backup JSON da configuração anterior"></textarea><div class="backup-actions"><button id="copyBackup" type="button">Copiar JSON</button><button id="saveBackup" type="button">Salvar JSON</button></div></details>
+</main>
+<script type="module" src="./boot.js"></script>
+</body>
+</html>

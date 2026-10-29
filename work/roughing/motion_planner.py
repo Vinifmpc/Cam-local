@@ -6,6 +6,7 @@ Previously completed cutting tracks prove only same-XY vertical reentry.
 No general stock simulation, feed selection or G-code emission is provided.
 """
 from collections import Counter
+import heapq
 import hashlib
 import math
 import struct
@@ -117,14 +118,165 @@ def _branches(points):
     return points[peak],branches
 
 
+def _rounded_track_link_supported(a,b,completed):
+    """Replay exact-track coverage in the coordinate grid actually exported.
+
+    A sub-EPS raw gap can straddle an NC rounding boundary and become a real
+    uncut gap. Polygon-based clearance has its own much larger geometry guard;
+    exact track coverage instead needs this explicit rounded-coordinate proof.
+    """
+    post=lambda p:[float(f'{v:.{NC_COORD_DECIMALS}f}') for v in p]
+    padding=2*10**(-NC_COORD_DECIMALS)
+    low=[min(a[i],b[i])-padding for i in range(2)]
+    high=[max(a[i],b[i])+padding for i in range(2)]
+    old=[(post(c),post(e)) for c,e,*_ in overlapping(completed,low,high)]
+    p,q=post(a),post(b)
+    if math.dist(p[:2],q[:2])<=EPS:
+        return any((math.dist(p[:2],c[:2])<=EPS and c[2]<=p[2]+EPS)
+            or (math.dist(p[:2],e[:2])<=EPS and e[2]<=p[2]+EPS)
+            or ((z:=_height_on_track(p,c,e)) is not None and z<=p[2]+EPS)
+            for c,e in old)
+    return _track_depth_supported(p,q,old,math.inf,0)
+
+
 def _cleared_link_supported(a,b,completed,area):
     if abs(a[2]-b[2])>EPS:return False
+    exact=False
     if math.dist(a[:2],b[:2])<=EPS:
-        if any((height:=_height_on_track(a,c,e)) is not None and height<=a[2]+EPS for c,e in overlapping(completed,a,a)):return True
+        exact=any((height:=_height_on_track(a,c,e)) is not None and height<=a[2]+EPS
+                  for c,e,*_ in overlapping(completed,a,a))
     # Infinite stock top disables the uniform-top shortcut. Even a link at
     # stock Z=0 must have a real XY footprint proof when fixtures stand above it.
-    elif _track_depth_supported(a,b,completed,math.inf,0):return True
+    else:exact=_track_depth_supported(a,b,completed,math.inf,0)
+    if exact and _rounded_track_link_supported(a,b,completed):return True
     return area.covers(a,b,a[2],require_cut=True)
+
+
+def _completed_cut_route(a,b,completed,area,max_length,edge_allowed=None):
+    """Find a bounded low route, proving every edge against completed cuts.
+
+    The graph is only a candidate generator. Neither proximity nor membership
+    in the graph proves stock removal: returned links replay the same exact
+    track/guarded capsule proof used by straight low links. No future source
+    paths, grid heights or previously emitted air moves enter this graph.
+    """
+    if (abs(a[2]-b[2])>EPS or not math.isfinite(max_length) or max_length<=0
+            or math.dist(a[:2],b[:2])>max_length+EPS):return None
+    height=a[2];start=tuple(a[:2]);goal=tuple(b[:2])
+    if start==goal:return [list(a),list(b)] if _cleared_link_supported(a,b,completed,area) else None
+    post=lambda p:[float(f'{v:.{NC_COORD_DECIMALS}f}') for v in p]
+    def point(xy):return [*xy,height]
+    checked={}
+    def allowed(u,v):
+        key=tuple(sorted((u,v)))
+        if key in checked:return checked[key]
+        p,q=point(u),point(v)
+        # This cache is undirected; the goal's approach candidates are tested
+        # backwards. Quantized capsule/track proofs can differ at a floating
+        # boundary, so certify both directions before reusing the result.
+        result=(_cleared_link_supported(p,q,completed,area)
+            and _cleared_link_supported(q,p,completed,area)
+            and (edge_allowed is None or (edge_allowed(p,q) and edge_allowed(q,p))))
+        checked[key]=result;return result
+    # Orthogonal corners are cheap candidates for short raster transitions.
+    # They still need the exact same guarded proof as a curved/graph route.
+    for corner in ((start[0],goal[1]),(goal[0],start[1])):
+        if (corner not in (start,goal) and math.dist(start,corner)+math.dist(corner,goal)<=max_length+EPS
+                and allowed(start,corner) and allowed(corner,goal)):
+            return [list(a),point(corner),list(b)]
+    # A small existing corner/vertex often joins adjacent rasters even when
+    # their straight chord crosses an uncut concavity. Try these before a
+    # graph search; each of the two complete swept disks is still certified.
+    low=[min(a[i],b[i])-max_length for i in range(2)]
+    high=[max(a[i],b[i])+max_length for i in range(2)]
+    eligible=[];vertices=set();seen_segments=set()
+    for record in overlapping(completed,low,high):
+        c,e=record[:2]
+        if max(c[2],e[2])>height+EPS:continue
+        u,v=tuple(c[:2]),tuple(e[:2])
+        if u==v:continue
+        key=tuple(sorted((u,v)))
+        if key in seen_segments:continue
+        seen_segments.add(key)
+        eligible.append((c,e));vertices.add(u);vertices.add(v)
+    if not eligible or len(vertices)>25000:return None
+    # A raster end often lies on a barely covered boundary. Turning there
+    # cannot be proved with a finite capsule guard; backing up a little on the
+    # actual completed raster first opens a short, guarded interior connector.
+    # Candidate points are not clearance authority: all three legs pass the
+    # same original/rounded track or guarded-area proof before use.
+    radius=area.radius
+    def interior_candidates(endpoint,other):
+        segments=[]
+        for c,e in eligible:
+            vx,vy=e[0]-c[0],e[1]-c[1];squared=vx*vx+vy*vy
+            t=max(0.,min(1.,((endpoint[0]-c[0])*vx+(endpoint[1]-c[1])*vy)/squared))
+            nearest=(c[0]+t*vx,c[1]+t*vy)
+            segments.append((math.dist(endpoint,nearest),tuple(c[:2]),tuple(e[:2]),t))
+        candidates={endpoint}
+        for distance,c,e,t in sorted(segments)[:8]:
+            length=math.dist(c,e)
+            for offset in (0.,.05,-.05,radius/4,-radius/4,radius/2,-radius/2):
+                fraction=max(0.,min(1.,t+offset/length))
+                vertex=tuple(c[i]+fraction*(e[i]-c[i]) for i in range(2))
+                if math.dist(endpoint,vertex)+math.dist(vertex,other)<=max_length+EPS:candidates.add(vertex)
+        candidates=sorted(candidates,key=lambda p:(math.dist(endpoint,p)+math.dist(p,other),p))
+        return [p for p in candidates if p==endpoint or allowed(endpoint,p)][:12]
+    left=interior_candidates(start,goal);right=interior_candidates(goal,start)
+    choices=sorted((math.dist(start,u)+math.dist(u,v)+math.dist(v,goal),u,v)
+                   for u in left for v in right if u!=v)
+    for length,u,v in choices:
+        if length>max_length+EPS:break
+        if allowed(u,v):
+            route=[start]+([u] if u!=start else [])+([v] if v!=goal else [])+[goal]
+            return [point(p) for p in route]
+    close=sorted((u for u in vertices if u not in (start,goal)),
+        key=lambda u:(math.dist(start,u)+math.dist(u,goal),u))
+    for vertex in close[:12]:
+        if math.dist(start,vertex)+math.dist(vertex,goal)>max_length+EPS:break
+        if allowed(start,vertex) and allowed(vertex,goal):return [list(a),point(vertex),list(b)]
+    graph={}
+    def connect(u,v):
+        if u==v:return
+        distance=math.dist(u,v)
+        graph.setdefault(u,{})[v]=distance;graph.setdefault(v,{})[u]=distance
+    for c,e in eligible:connect(tuple(c[:2]),tuple(e[:2]))
+    # Endpoints may sit inside an older segment, not only at its vertices.
+    # The split must also remain on that segment after NC coordinate rounding;
+    # otherwise use a guarded area bridge or reject the candidate.
+    for endpoint in (start,goal):
+        p=point(endpoint)
+        for c,e in overlapping(completed,p,p):
+            if max(c[2],e[2])>height+EPS or _height_on_track(p,c,e) is None:continue
+            if _height_on_track(post(p),post(c),post(e)) is None:continue
+            connect(endpoint,tuple(c[:2]));connect(endpoint,tuple(e[:2]))
+        # Only a few nearby vertices are considered. A rejected bridge never
+        # becomes an edge; its complete footprint must be already removed.
+        neighbors=sorted((u for u in vertices if u!=endpoint),key=lambda u:(math.dist(endpoint,u),u))
+        for vertex in neighbors[:8]:
+            if math.dist(endpoint,vertex)+math.dist(vertex,goal if endpoint==start else start)>max_length+EPS:continue
+            if vertex not in graph.get(endpoint,{}) and allowed(endpoint,vertex):connect(endpoint,vertex)
+    if start not in graph or goal not in graph:return None
+    distances={start:0.};parents={};pending=[(0.,start)];visited=0
+    while pending:
+        length,u=heapq.heappop(pending)
+        if length!=distances[u]:continue
+        if u==goal:break
+        visited+=1
+        if visited>8000:return None
+        for v,distance in graph[u].items():
+            candidate=length+distance
+            if candidate+math.dist(v,goal)>max_length+EPS:continue
+            if candidate<distances.get(v,math.inf):
+                distances[v]=candidate;parents[v]=u;heapq.heappush(pending,(candidate,v))
+    else:return None
+    route=[goal]
+    while route[-1]!=start:route.append(parents[route[-1]])
+    route.reverse()
+    # Exact old graph edges are known clear, but independently check the full
+    # resulting route too. This is also where automatic-region policy applies.
+    if any(not allowed(u,v) for u,v in zip(route,route[1:])):return None
+    return [point(u) for u in route]
 
 
 class PriorCutState:
@@ -186,7 +338,8 @@ def _entry_cut_proof(saved):
 def plan_ramps_and_links(job,triangles,*,entry_angle_deg=3.0,clearance=2.54,
                         approach_gap=.25,stock_top=None,obstacle_top=None,
                         initial_position=None,max_ramp_passes=500,path_order='layer',progress=None,
-                        prior_motion=None,allow_center_plunge=False):
+                        prior_motion=None,allow_center_plunge=False,
+                        entry_policy='ramp',cutting_feed=None,plunge_feed=None):
     """Connect source cuts without inventing unproven low traverses.
 
     Stock is assumed bounded above by stock_top. obstacle_top bounds any
@@ -198,6 +351,10 @@ def plan_ramps_and_links(job,triangles,*,entry_angle_deg=3.0,clearance=2.54,
     mesh=np.asarray(triangles,float)
     if path_order not in ('layer','region_first'):raise MotionPlanningError('Invalid roughing path order')
     if type(allow_center_plunge) is not bool:raise MotionPlanningError('Invalid center-cutting capability')
+    if entry_policy not in ('ramp','auto'):raise MotionPlanningError('Invalid entry policy')
+    for rate in (cutting_feed,plunge_feed):
+        if rate is not None and (isinstance(rate,bool) or not isinstance(rate,(int,float)) or not math.isfinite(rate) or rate<=0):
+            raise MotionPlanningError('Invalid entry comparison feed')
     if mesh.ndim!=3 or mesh.shape[1:]!=(3,3) or not len(mesh) or not np.isfinite(mesh).all():
         raise MotionPlanningError('Invalid mesh')
     top=job['parameters']['z_top'] if stock_top is None else stock_top
@@ -256,6 +413,8 @@ def plan_ramps_and_links(job,triangles,*,entry_angle_deg=3.0,clearance=2.54,
         visited=prior_state.visited.copy();cleared_tracks=prior_state.tracks;cleared_area=prior_state.area
         for a,b,move_id in prior_state.cuts:completed.append((a,b,-move_id-1))
     tangent=math.tan(math.radians(entry_angle_deg))
+    from fixture_travel import FixtureTravel
+    fixture_route=FixtureTravel(job.get('fixture_travel'))
 
     def emit(kind,end,context=None,**proof):
         nonlocal current
@@ -263,16 +422,30 @@ def plan_ramps_and_links(job,triangles,*,entry_angle_deg=3.0,clearance=2.54,
         # A sub-resolution move must not silently change the planner position:
         # that would leave an unrepresented displacement between emitted moves.
         if current==end:return None
-        record={'id':len(moves),'kind':kind,'start':current.copy(),'end':end,
-                **(context or {}),'proof':proof}
-        moves.append(record);current=end
-        if len(moves)>1_000_000:raise MotionPlanningError('Motion count limit exceeded')
+        destinations=fixture_route.route(current,end)[1:] if kind=='travel' else [end]
+        detour=len(destinations)>1
+        for destination in destinations:
+            record={'id':len(moves),'kind':kind,'start':current.copy(),'end':list(destination),
+                    **(context or {}),'proof':{**proof,**({'fixture_detour':True} if detour else {})}}
+            moves.append(record);current=list(destination)
+            if len(moves)>1_000_000:raise MotionPlanningError('Motion count limit exceeded')
         return record['id']
 
     def ramp(arm,edge_ids,start_z,target_z,context):
         if start_z<=target_z+EPS:return 0
         length=sum(math.dist(a[:2],b[:2]) for a,b in zip(arm,arm[1:]))
         needed=math.ceil((start_z-target_z)/(tangent*length))
+        # Even an ideal ramp must travel drop/sin(angle). Choose a vertical
+        # entry only when it beats that LOWER bound at the actual configured
+        # feeds. Existing replay still requires a source contact vertex, a
+        # confirmed center cutter and at most one proved material stepdown.
+        faster_plunge=(entry_policy=='auto' and allow_center_plunge and cutting_feed is not None
+            and plunge_feed is not None and
+            (start_z-target_z)/plunge_feed < (start_z-target_z)/(math.sin(math.radians(entry_angle_deg))*cutting_feed))
+        if faster_plunge:
+            emit('plunge',[*arm[0][:2],target_z],context,source_edge=edge_ids[0],
+                 target_z=target_z,center_cutting_required=True,optimized_entry=True)
+            return 0
         if needed>max_ramp_passes:
             if allow_center_plunge:
                 emit('plunge',[*arm[0][:2],target_z],context,source_edge=edge_ids[0],
@@ -335,19 +508,33 @@ def plan_ramps_and_links(job,triangles,*,entry_angle_deg=3.0,clearance=2.54,
             raise MotionPlanningError(f'Entry needs more than one stepdown without prior clearance at {context}')
         height=max(current[2],entry_floor)
         start=[*current[:2],height];end=[*peak[:2],height]
-        stay_down=(((path_order=='region_first' and previous_region==region) or prior_state is not None) and height<safe_z-EPS
+        low_policy=((path_order=='region_first' and previous_region==region) or prior_state is not None) and height<safe_z-EPS
+        stay_down=(low_policy
             and _cleared_link_supported(start,end,cleared_tracks,cleared_area))
-        if stay_down and job.get('automatic_regions') is not None:
+        edge_allowed=None
+        if job.get('automatic_regions') is not None:
             from smart_planner import edge_in_automatic_domain
-            stay_down=edge_in_automatic_domain(start,end,job['automatic_regions'],top)
+            edge_allowed=lambda a,b:edge_in_automatic_domain(a,b,job['automatic_regions'],top)
+        if stay_down and job.get('automatic_regions') is not None:
+            stay_down=edge_allowed(start,end)
+        route=None
+        if low_policy and not stay_down:
+            # Never replace a short retract by an unlimited tour around the
+            # pocket. This geometric budget is at most the former XYZ travel
+            # distance; the original feeds and acceleration model remain used.
+            budget=math.dist(start[:2],end[:2])+2*(safe_z-height)
+            route=_completed_cut_route(start,end,cleared_tracks,cleared_area,budget,edge_allowed)
+            stay_down=route is not None
         if stay_down:
             emit('approach',start,context,cleared_floor=current[2])
-            emit('link_cleared',end,context,clearance='completed_cut_footprints_only')
+            for vertex in (route[1:] if route else [end]):
+                emit('link_cleared',vertex,context,clearance='completed_cut_footprints_only',
+                    **({'routed':True} if route else {}))
         else:
             if current[2]<safe_z-EPS:
                 emit('retract',[*current[:2],safe_z],context,above_bound=max(top,fixture_top,mesh_top))
             emit('travel',[peak[0],peak[1],safe_z],context,clearance_plane=safe_z)
-            emit('approach',[peak[0],peak[1],entry_floor+approach_gap],context,
+            emit('approach_rapid',[peak[0],peak[1],entry_floor+approach_gap],context,
                  cleared_floor=cleared,**_entry_cut_proof(saved))
         emit('cleared_feed',[peak[0],peak[1],entry_floor],context,
              cleared_floor=cleared,**_entry_cut_proof(saved))
@@ -355,6 +542,7 @@ def plan_ramps_and_links(job,triangles,*,entry_angle_deg=3.0,clearance=2.54,
         entries.append({**context,'peak':peak,'cleared_floor':cleared,
                         **({'uses_prior_roughing':bool(saved and saved['move']<0)} if prior_state is not None else {}),
                         'entry_start_z':entry_floor,'ramp_passes':passes,'stay_down':stay_down,
+                        **({'routed_stay_down':True} if route else {}),
                         **({'center_plunge':True} if moves and moves[-1]['kind']=='plunge' else {})})
         for bi,(arm,edge_ids) in enumerate(branches):
             cut_ids=[]
@@ -386,6 +574,7 @@ def plan_ramps_and_links(job,triangles,*,entry_angle_deg=3.0,clearance=2.54,
           'approach_gap':approach_gap,'max_ramp_passes':max_ramp_passes},
         'path_order':path_order,'region_schedule':schedule,
         'stay_down_entries':sum(e['stay_down'] for e in entries),
+        'routed_stay_down_entries':sum(e.get('routed_stay_down',False) for e in entries),
         'source_cutting_edges':sum(len(p)-1 for _,_,p in source_paths),
         'move_counts':dict(Counter(m['kind'] for m in moves)),
         'length_mm':dict((kind,sum(math.dist(m['start'],m['end']) for m in moves if m['kind']==kind))
@@ -397,6 +586,11 @@ def plan_ramps_and_links(job,triangles,*,entry_angle_deg=3.0,clearance=2.54,
           'No holder/machine collision, feed/spindle selection or G-code certification',
           'Not a reconstruction of MeshCAM helix or exact linking algorithm']}
     result['parameters']['allow_center_plunge']=allow_center_plunge
+    if job.get('fixture_travel') is not None:result['parameters']['fixture_travel']=job['fixture_travel']
+    result['parameters'].update(entry_policy=entry_policy,
+        comparison_cutting_feed=cutting_feed if entry_policy=='auto' else None,
+        comparison_plunge_feed=plunge_feed if entry_policy=='auto' else None)
+    result['optimized_center_plunge_entries']=sum(m['kind']=='plunge' and m['proof'].get('optimized_entry',False) for m in moves)
     result['center_plunge_entries']=sum(e.get('center_plunge',False) for e in entries)
     if prior_state is not None:
         result['prior_roughing']={'cut_moves':prior_state.cut_count,'sha256':prior_state.fingerprint}
@@ -412,6 +606,9 @@ def plan_ramps_and_links(job,triangles,*,entry_angle_deg=3.0,clearance=2.54,
 def validate_motion(plan,source,*,progress=None,prior_motion=None):
     """Replay independently: continuity, cut preservation and every link proof."""
     if progress:progress('Revisando os movimentos calculados',0)
+    from fixture_travel import FixtureTravel
+    if plan['parameters'].get('fixture_travel')!=source.get('fixture_travel'):raise MotionPlanningError('Política de desvio da fixação mudou')
+    fixture_route=FixtureTravel(source.get('fixture_travel'))
     if plan.get('tool') is not None and any(plan['tool'].get(key)!=source['tool'][key]
                                            for key in ('diameter','length')):
         raise MotionPlanningError('Ferramenta dos movimentos difere da ferramenta dos percursos fonte')
@@ -515,7 +712,7 @@ def validate_motion(plan,source,*,progress=None,prior_motion=None):
             if a[2]<known-EPS and cleared_area.covers(b,b,a[2]):known=a[2]
             if a[2]<known-EPS or known-b[2]>step+EPS:
                 raise MotionPlanningError('Vertical cutting entry exceeds one proved stepdown')
-        elif kind in ('approach','cleared_feed'):
+        elif kind in ('approach','approach_rapid','cleared_feed'):
             known=min(plan['stock_top'],visited.get(_xy_key(b),math.inf))
             if min(a[2],b[2])<known-EPS:
                 for c,e in completed.overlapping(b,b):
@@ -525,12 +722,15 @@ def validate_motion(plan,source,*,progress=None,prior_motion=None):
                 known=min(a[2],b[2])
             if math.dist(a[:2],b[:2])>EPS or min(a[2],b[2])<known-EPS:
                 raise MotionPlanningError('Vertical feed lacks same-XY clearance proof')
+            if kind=='approach_rapid' and b[2]>a[2]+EPS:
+                raise MotionPlanningError('Rapid approach must descend vertically through cleared material')
         elif kind=='retract':
             if math.dist(a[:2],b[:2])>EPS or b[2]<a[2]-EPS or abs(b[2]-plan['safe_z'])>EPS:
                 raise MotionPlanningError('Invalid retract')
         elif kind=='travel':
             if abs(a[2]-plan['safe_z'])>EPS or abs(b[2]-plan['safe_z'])>EPS:
                 raise MotionPlanningError('Low traverse without proof')
+            if not fixture_route.clear(a,b):raise MotionPlanningError('Travessia cruza a fixação protegida')
         elif kind=='clearance_adjust':
             if math.dist(a[:2],b[:2])>EPS or min(a[2],b[2])<plan['safe_z']-EPS:
                 raise MotionPlanningError('Clearance adjustment below the passage plane')

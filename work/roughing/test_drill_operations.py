@@ -100,7 +100,7 @@ class DrillOperationSettingsTests(unittest.TestCase):
 
     def test_timing_selects_drill_feed_and_keeps_plunge_and_rapid_rules(self):
         options=OperationSettings(drill_enabled=True,roughing_feed_mm_min=500,
-            cutout_feed_mm_min=400,drill_feed_mm_min=300,plunge_mm_min=100,rapid_mm_min=3000)
+            cutout_feed_mm_min=400,drill_feed_mm_min=300,plunge_mm_min=100,rapid_mm_min=3000,timing_model='constant')
         motion={'moves':[
             {'kind':'cut','operation':'roughing','start':[0,0,0],'end':[5,0,0]},
             {'kind':'cut','operation':'cutout','start':[0,0,0],'end':[5,0,0]},

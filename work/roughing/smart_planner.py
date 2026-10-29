@@ -67,16 +67,17 @@ def exterior_strategy(triangles):
 
 def resolve_smart_plan(mesh,tool,settings,options):
     if options.machining_mode!='smart':return settings,options,None
+    released=options.smart_part_released
     triangles=np.asarray(mesh.triangles if hasattr(mesh,'triangles') else mesh,float)
     model_bottom=float(triangles[:,:,2].min())
     stock_bottom=model_bottom if options.smart_stock_bottom_mm is None else options.smart_stock_bottom_mm
     if stock_bottom>model_bottom+1e-8:
         raise ValueError('Modo inteligente: fundo do bruto deve ficar no fundo do STL ou abaixo dele')
     stock_bottom=min(float(stock_bottom),model_bottom)
-    skin=(min(.5,settings.stepdown_mm,.2*tool.diameter_mm,
+    skin=0. if released else (min(.5,settings.stepdown_mm,.2*tool.diameter_mm,
               (settings.stock_top_mm-stock_bottom)/4)
           if options.smart_skin_mm is None else float(options.smart_skin_mm))
-    if skin>=settings.stock_top_mm-stock_bottom:
+    if not released and skin>=settings.stock_top_mm-stock_bottom:
         raise ValueError('Modo inteligente: pele de retenção deve ser menor que a espessura do bruto')
     cutout_bottom=stock_bottom-options.smart_breakthrough_mm
     effective=replace(settings,bottom_mm=model_bottom,region_mode='layer',domain_mode='expanded',cleanup_contours=True,
@@ -85,6 +86,7 @@ def resolve_smart_plan(mesh,tool,settings,options):
     # contracts then validate exactly the depth used for the release.
     resolved=replace(options,smart_stock_bottom_mm=stock_bottom,
         cutout_bottom_mm=cutout_bottom,
+        cutout_enabled=False if released else True,
         cutout_stepdown_mm=min(options.cutout_stepdown_mm,settings.stepdown_mm))
     from cam_operations import validate_operations
     validate_operations(resolved,effective,tool)
@@ -94,11 +96,14 @@ def resolve_smart_plan(mesh,tool,settings,options):
     if stock_bottom<model_bottom-1e-8:
         assumptions.append(f'Bruto {model_bottom-stock_bottom:g} mm abaixo do STL: esse material sob a peça '
             'permanece; os recortes selecionados atravessam o fundo declarado, sem usinar a face inferior inteira.')
-    assumptions.extend([
+    assumptions.extend(([
+        'Peça já solta: o plano não inclui contorno externo nem pele de retenção.',
+        'Keep In e Keep Out limitam o interior; recortes internos bloqueados pela fixação ficam no Rough.',
+        'Avanços e RPM usam exclusivamente os valores cadastrados.'] if released else [
         'Keep In e Keep Out continuam limitando somente o Rough; o Cutout inclui os internos escolhidos pelo plano e o exterior.',
         'A pele exterior permanece até o Cutout; bolsões com fundo continuam no Rough.',
         'O recorte final libera a peça do bruto; a geometria não informa fixação, grampos ou mesa de sacrifício.',
-        'Avanços e RPM usam exclusivamente os valores cadastrados.'])
+        'Avanços e RPM usam exclusivamente os valores cadastrados.']))
     report={'enabled':True,'sequence':resolved.sequence(),
         'allow_center_plunge':options.drill_center_cutting,
         'stock_bottom_mm':stock_bottom,'model_bottom_mm':model_bottom,
@@ -111,7 +116,12 @@ def resolve_smart_plan(mesh,tool,settings,options):
         'breakthrough_mm':options.smart_breakthrough_mm,
         'respect_roughing_regions':True,'release_contours':'external',
         'assumptions':assumptions}
+    if released:
+        from fixture_travel import fixture_travel_policy
+        report.update(part_released=True,retention_z_mm=None,skin_source='not_required',release_contours='none',
+                      fixture_travel=fixture_travel_policy(effective,tool,resolved))
     report['exterior_strategy']=exterior_strategy(triangles)
+    if released:report['exterior_strategy'].update(mode='interior_only',reason='Peça já solta: usinar somente o interior, sem preparar ou recortar o exterior.')
     if report['exterior_strategy']['proof']['possible_undercut']:
         assumptions.append('A malha contém superfícies inferiores acima do fundo que podem ficar '
             'inacessíveis por cima. O Rough conserva o envelope de contato; o Cutout nominal '
@@ -121,21 +131,29 @@ def resolve_smart_plan(mesh,tool,settings,options):
                            'o corte pelo centro da ferramenta está confirmado.')
     from internal_cutouts import plan_internal_cutouts
     report['internal_cutouts']=plan_internal_cutouts(triangles,tool,effective,resolved)
+    if released:
+        resolved=replace(resolved,cutout_enabled=bool(report['internal_cutouts']['selected_count']))
+        validate_operations(resolved,effective,tool)
+        report['sequence']=resolved.sequence()
     if report['internal_cutouts']['selected_count']:
-        report['release_contours']='automatic_internal_then_external'
+        report['release_contours']='automatic_internal_only' if released else 'automatic_internal_then_external'
         assumptions.append(f"{report['internal_cutouts']['selected_count']} abertura(s) passante(s): "
-            'o Cutout recorta o miolo antes do exterior, em vez de desbastá-lo inteiro. '
+            +('o Cutout recorta apenas os miolos internos, sem recortar o exterior. ' if released else
+              'o Cutout recorta o miolo antes do exterior, em vez de desbastá-lo inteiro. ')+
             'O miolo permanece como sobra recortada; mantenha apoio para essa sobra e remova-a após a usinagem.')
     report['automatic_regions']=automatic_regions(triangles,tool,effective,
-        internal_cutouts=report['internal_cutouts'])
+        internal_cutouts=report['internal_cutouts'],released_part=released,roughing_enabled=resolved.roughing_enabled)
     report['preparation_contours']=preparation_spec(triangles,tool,effective,resolved,report)
     unreachable=report['automatic_regions']['rough_unreachable_projected_openings']
     if unreachable:
         assumptions.append(f'O Rough não alcança {unreachable} abertura(s) interna(s) com seu envelope '
             'conservador; confira a compatibilidade do Drill ou utilize uma ferramenta menor.')
     if settings.radial_allowance_mm or settings.axial_allowance_mm:
-        assumptions.append('O perfil externo de preparação segue a dimensão nominal; '
-            'as sobras lateral e de fundo cadastradas continuam nas demais superfícies do Rough.')
+        assumptions.append('As sobras lateral e de fundo cadastradas continuam nas superfícies do Rough.' if released else
+            'O perfil externo de preparação segue a dimensão nominal; as sobras lateral e de fundo cadastradas continuam nas demais superfícies do Rough.')
+    if released:
+        report['retention_band_outer_variation_mm2']=0.
+        return effective,resolved,report
     from layer_regions import shadow_above
     from stl_roughing import projected_shadow
     from region_core import boolean,pyclipr,signed_area
@@ -154,7 +172,7 @@ def resolve_smart_plan(mesh,tool,settings,options):
     return effective,resolved,report
 
 
-def automatic_regions(triangles,tool,settings,*,internal_cutouts=None):
+def automatic_regions(triangles,tool,settings,*,internal_cutouts=None,released_part=False,roughing_enabled=True):
     """Effective center domain follows the part, including its concavities.
 
     The offset exactly matches the conservative layer-protection radius. A
@@ -169,7 +187,8 @@ def automatic_regions(triangles,tool,settings,*,internal_cutouts=None):
     filled=boolean(outer,[],pyclipr.Union) if outer else []
     distance=tool.diameter_mm/2+settings.radial_allowance_mm+settings.sampling_mm/2+.005
     overlap=.005
-    domain=offset(filled,distance) if filled else []
+    domain_offset=-(tool.diameter_mm/2+settings.boundary_margin_mm) if released_part else distance
+    domain=offset(filled,domain_offset) if filled else []
     delegated=[p for feature in (internal_cutouts or {}).get('features',[]) if feature['decision']=='cutout'
                for p in feature['excluded_center_polygons_mm']]
     if delegated and domain:
@@ -181,13 +200,14 @@ def automatic_regions(triangles,tool,settings,*,internal_cutouts=None):
         forbidden=offset(boolean(settings.exclusions_mm,[],pyclipr.Union),
                          tool.diameter_mm/2+settings.boundary_margin_mm)
         domain=boolean(domain,forbidden,pyclipr.Difference)
+    if not roughing_enabled:domain=[]
     area=sum(signed_area(p) for p in domain)
     points=np.concatenate(domain) if domain else None
     holes=[p for p in shadow if signed_area(p)<0]
     unreachable=[index for index,path in enumerate(holes) if not offset([path[::-1]],-distance-overlap)]
-    result={'source':'filled_external_silhouette','policy_version':1,
+    result={'source':'released_part_interior' if released_part else 'filled_external_silhouette','policy_version':1,
         'polygons_mm':[np.asarray(p,float).tolist() for p in domain],
-        'area_mm2':area,'offset_mm':distance,
+        'area_mm2':area,'offset_mm':domain_offset,
         'bounds_mm':([*points.min(axis=0).tolist(),*points.max(axis=0).tolist()] if domain else None),
         'manual_limits_applied':bool(settings.boundaries_mm or settings.exclusions_mm),
         'exterior_components':sum(signed_area(p)>0 for p in domain),
@@ -199,10 +219,11 @@ def automatic_regions(triangles,tool,settings,*,internal_cutouts=None):
         'protected_center_offset_mm':distance+overlap,
         'access_policy':'cleanup_then_raster',
         'exterior_raster_collar_mm':0.0}
-    if delegated:
-        # Boolean intersections may round a new vertex a few integer-grid
-        # units across a hole boundary. Generate INSIDE the proof domain;
-        # never enlarge that domain or relax the independent edge validator.
+    if domain:
+        # Every layer difference/intersection can round a new vertex a few
+        # integer-grid units across an outer edge, not only a delegated hole.
+        # Generate INSIDE the proof domain so cleanup and its contact samples
+        # stay contained. Keep the independently rebuilt proof domain intact.
         result['source_domain_inset_mm']=.00001
         result['source_polygons_mm']=[p.tolist() for p in offset(domain,-.00001)]
     return result
@@ -212,15 +233,16 @@ def _nominal_cutout(triangles,tool,settings,options):
     from cutout import generate_cutout
     return generate_cutout(triangles,diameter=tool.diameter_mm,tool_length=tool.cutting_length_mm,
         top=settings.stock_top_mm,bottom=options.cutout_bottom_mm,
-        stepdown=options.cutout_stepdown_mm,direction=options.cutout_direction,contours='external')
+        stepdown=options.cutout_stepdown_mm,direction=options.cutout_direction,contours='external',
+        smoothing_mm=options.cutout_smoothing_mm)
 
 
 def preparation_spec(triangles,tool,settings,options,report):
-    if report['exterior_strategy']['mode']=='features_then_cutout':
+    if report['exterior_strategy']['mode'] in ('features_then_cutout','interior_only'):
         return {'eligible':0,'blocked':0,'eligible_contour_indices':[],
             'blocked_contour_indices':[],'levels_mm':[],'depth_count':0,'depth_min_mm':None,
             'retention_depth_added':False,'source_sha256':hashlib.sha256(b'[]').hexdigest(),
-            'method':'not_required_for_features_then_cutout','not_required':True}
+            'method':'not_required_for_interior_only' if report.get('part_released') else 'not_required_for_features_then_cutout','not_required':True}
     job=_nominal_cutout(triangles,tool,settings,options)
     plane=report['retention_z_mm']
     levels=sorted({float(level['z']) for level in job['depth_levels'] if level['z']>=plane-1e-8},reverse=True)
@@ -282,8 +304,13 @@ def add_preparation_contours(job,triangles,tool,settings,options,report,progress
         contact_diameter=tool.diameter_mm+2*settings.radial_allowance_mm+settings.sampling_mm,
         stock_top=settings.stock_top_mm,angle=settings.entry_angle_deg,
         contains=lambda a,b:edge_in_automatic_domain(a,b,report['automatic_regions'],settings.stock_top_mm))
+    pruning={}
     stage_paths(layers,diameter=tool.diameter_mm,stock_top=settings.stock_top_mm,
-                stepdown=settings.stepdown_mm,progress=progress)
+                stepdown=settings.stepdown_mm,progress=progress,
+                prune_redundant=settings.strategy in ('hybrid','planar'),
+                trim_redundant=(settings.strategy in ('hybrid','planar')
+                    and options.drill_center_cutting and settings.optimize_entries),stats=pruning)
+    job.update(pruning)
     job['layers']=layers
     all_paths=[p for layer in layers for p in layer['polylines']]
     job.update({'automatic_regions':report['automatic_regions'],
@@ -295,11 +322,12 @@ def add_preparation_contours(job,triangles,tool,settings,options,report,progress
         'preparation_cutting_edges':sum(len(p['points'])-1 for p in paths),
         'preclear_polyline_count':sum(p['kind']=='preclear' for p in all_paths),
         'preclear_cutting_edges':sum(len(p['points'])-1 for p in all_paths if p['kind']=='preclear')})
+    if report.get('fixture_travel') is not None:job['fixture_travel']=report['fixture_travel']
     return job
 
 
 def retention_parameters(triangles,tool,settings,report):
-    if report is None:return None
+    if report is None or report.get('part_released'):return None
     from stl_roughing import projected_shadow
     from region_core import boolean,offset,pyclipr,signed_area
     # Drop negative hole loops deliberately: retaining an outside skin must
@@ -385,6 +413,8 @@ def edge_in_automatic_domain(a,b,automatic,stock_top):
 
 def validate_smart_geometry(job,triangles,tool,settings,options,report,motion=None):
     if report is None:return
+    if job.get('fixture_travel')!=report.get('fixture_travel'):
+        raise ValueError('Desvio da fixação mudou; recalcule')
     from short_entries import validate_short_entries
     validate_short_entries(job['layers'],diameter=tool.diameter_mm,
         contact_diameter=tool.diameter_mm+2*settings.radial_allowance_mm+settings.sampling_mm)
@@ -392,7 +422,7 @@ def validate_smart_geometry(job,triangles,tool,settings,options,report,motion=No
     internal=plan_internal_cutouts(triangles,tool,settings,options)
     if report.get('internal_cutouts')!=internal:
         raise ValueError('Seleção de recortes internos automáticos mudou; recalcule')
-    automatic=automatic_regions(triangles,tool,settings,internal_cutouts=internal)
+    automatic=automatic_regions(triangles,tool,settings,internal_cutouts=internal,released_part=options.smart_part_released,roughing_enabled=options.roughing_enabled)
     spec=preparation_spec(triangles,tool,settings,options,report)
     if job.get('automatic_regions')!=automatic or job.get('preparation_contours')!=spec:
         raise ValueError('Áreas automáticas ou preparação do perfil mudaram; recalcule')
@@ -437,3 +467,15 @@ def validate_smart_retention(job,triangles,tool,settings,report,motion=None):
         for move in motion['moves']:
             if not _edge_retained(move['start'],move['end'],expected):
                 raise ValueError('Movimento do Rough atravessa a pele exterior de retenção')
+
+
+def validate_released_auxiliary_motion(plan,triangles,tool,settings,options,name):
+    """Internal profiles and drilling must also avoid a released part's clamp."""
+    if options.machining_mode!='smart' or not options.smart_part_released:return
+    domain=automatic_regions(triangles,tool,settings,released_part=True)['polygons_mm']
+    top=max(settings.stock_top_mm,settings.obstacle_top_mm if settings.obstacle_top_mm is not None else settings.stock_top_mm)
+    for move in plan['moves']:
+        a,b=move['start'],move['end']
+        if min(a[2],b[2])>top+1e-8:continue
+        if not _edge_in_domain(a,b,domain):
+            raise ValueError(name+': movimento bloqueado pela fixação ou pelos limites internos da peça já solta. Reveja a operação e a área protegida.')

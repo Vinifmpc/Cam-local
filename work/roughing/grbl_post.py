@@ -33,6 +33,22 @@ def validate_calculation(result,project_path):
     plans=[];prior_roughing=None
     for index,name in enumerate(sequence):
         plan=result['operations'][name];job=result[name]
+        if name=='roughing':
+            annular=smart_plan is not None and options.smart_part_released and s.strategy=='planar'
+            if job['parameters'].get('annular_pockets',False)!=annular:raise ValueError('Estratégia de rebaixo anular mudou; recalcule')
+            policy='auto' if s.strategy in ('hybrid','planar') and s.optimize_entries else 'ramp'
+            if (plan['parameters'].get('entry_policy','ramp')!=policy or (policy=='auto' and (
+                    plan['parameters'].get('comparison_cutting_feed')!=(options.roughing_feed_mm_min or tool.feed_mm_min) or
+                    plan['parameters'].get('comparison_plunge_feed')!=(options.plunge_mm_min or tool.plunge_mm_min)))):
+                raise ValueError('Escolha de entrada ou avanços mudaram; recalcule antes de exportar')
+        if name=='roughing' and s.strategy=='hybrid':
+            from rough_quality import quality_spec
+            quality=quality_spec(mesh.triangles,top=s.stock_top_mm,
+                bottom=max(float(mesh.triangles[:,:,2].min()),s.bottom_mm)+s.tolerance_mm,
+                axial_allowance=s.axial_allowance_mm,surface_error=s.surface_error_mm,path_tolerance=s.path_tolerance_mm)
+            if (job.get('quality')!=quality or any(job['parameters'].get(k)!=v for k,v in
+                    (('strategy','hybrid'),('surface_error',s.surface_error_mm),('path_tolerance',s.path_tolerance_mm)))):
+                raise ValueError('Precisão do desbaste mudou; recalcule antes de exportar')
         if name=='roughing' and plan.get('path_order','layer')!=options.roughing_order:
             raise ValueError('Prioridade do rough mudou; recalcule antes de exportar')
         if name!='drill' and plan['parameters'].get('allow_center_plunge',False)!=(
@@ -52,9 +68,13 @@ def validate_calculation(result,project_path):
                 tool_length=tool.cutting_length_mm,top=s.stock_top_mm,
                 bottom=validate_operations(options,s,tool),stepdown=options.cutout_stepdown_mm,
                 direction=options.cutout_direction,contours=options.cutout_contours,
-                internal_indices=(smart_plan['internal_cutouts']['selected_indices'] or None) if smart_plan is not None else None)
+                smoothing_mm=options.cutout_smoothing_mm,
+                internal_indices=(smart_plan['internal_cutouts']['selected_indices'] or None) if smart_plan is not None else None,
+                boundaries=s.boundaries_mm if options.smart_part_released and smart_plan is not None else None,
+                exclusions=s.exclusions_mm if options.smart_part_released and smart_plan is not None else None)
+            if smart_plan is not None and smart_plan.get('fixture_travel') is not None:original['fixture_travel']=smart_plan['fixture_travel']
             for key in ('parameters','tool','contours','contours_selection',
-                        'internal_contours_total','skipped_internal_contours','selected_internal_indices'):
+                        'internal_contours_total','skipped_internal_contours','selected_internal_indices','contour_flow','fixture_travel'):
                 if job.get(key)!=original.get(key):
                     raise ValueError('Contornos do Cutout mudaram; recalcule antes de exportar')
             if prior is not None:
@@ -68,15 +88,21 @@ def validate_calculation(result,project_path):
         if name=='drill':
             from drill import generate_drill,validate_drill_motion
             original,_=generate_drill(mesh.triangles,diameter=tool.diameter_mm,tool_length=tool.cutting_length_mm,
+                retract_mode=options.drill_retract_mode,retract_mm=options.drill_retract_mm,
+                rapid_reentry=options.drill_rapid_reentry,reentry_gap=options.drill_reentry_gap_mm,
                 stock_top=s.stock_top_mm,bottom=options.drill_bottom_mm if options.drill_bottom_mm is not None else s.bottom_mm,
                 peck=options.drill_peck_mm,tolerance=options.drill_tolerance_mm,
                 allow_helix=options.drill_allow_helix,center_cutting=options.drill_center_cutting,
                 compensate_facets=options.drill_compensate_facets,
                 clearance=s.clearance_mm,obstacle_top=s.obstacle_top_mm,
-                entry_angle_deg=s.entry_angle_deg,initial_position=plan['initial_position'])
+                entry_angle_deg=s.entry_angle_deg,initial_position=plan['initial_position'],
+                fixture_travel=smart_plan.get('fixture_travel') if smart_plan is not None else None)
             if job!=original:raise ValueError('Furos ou parâmetros do Drill mudaram; recalcule')
             validate_drill_motion(plan,job,mesh.triangles)
         else:validate_motion(plan,job,prior_motion=prior)
+        if name in ('drill','cutout'):
+            from smart_planner import validate_released_auxiliary_motion
+            validate_released_auxiliary_motion(plan,mesh.triangles,tool,s,options,name)
         plans.append((name,plan))
         if name=='roughing':prior_roughing=plan
     expected=compose(plans,options,tool)
@@ -111,16 +137,29 @@ def render(motion,spindle,order):
     lines+=['G0 Z'+number(initial[2]),'G0 X'+number(initial[0])+' Y'+number(initial[1]),
             'S'+number(spindle)+' M3']
     mapped=[];operation=None
+    position=[number(v) for v in initial];mode=0;feed=None
     for m in motion['moves']:
-        if m['operation']!=operation:
+        operation_start=m['operation']!=operation
+        if operation_start:
             operation=m['operation'];lines.append('(OP '+operation.upper()+')')
-        rapid=m['kind'] in ('travel','retract','clearance_adjust')
-        row=('G0' if rapid else 'G1')+' '+ ' '.join(axis+number(v) for axis,v in zip('XYZ',m['end']))
+        rapid=m['kind'] in ('travel','retract','clearance_adjust','approach_rapid')
+        next_mode=0 if rapid else 1
+        endpoint=[number(v) for v in m['end']]
+        axes=[axis+value for axis,value,previous in zip('XYZ',endpoint,position) if value!=previous]
+        # Keep an axis-bearing block for every source movement, including
+        # endpoints that round to the same NC position. Modal state is compared
+        # after formatting so tiny coordinate/feed changes cannot be lost.
+        if not axes:axes=['Z'+endpoint[2]]
+        words=(['G'+str(next_mode)] if operation_start or next_mode!=mode else [])+axes
         if not rapid:
             if round(m['feed_mm_min'],DECIMALS)<=0:raise ValueError('Avanço perde precisão no formato NC')
-            row+=' F'+number(m['feed_mm_min'])
+            next_feed=number(m['feed_mm_min'])
+            if next_feed!=feed:words.append('F'+next_feed)
+            feed=next_feed
+        row=' '.join(words)
         if len(row)>79:raise ValueError('Linha excede o perfil GRBL de 79 caracteres')
         mapped.append(len(lines)+1);lines.append(row)
+        position=endpoint;mode=next_mode
     if motion['final_position'][2]<motion['safe_z']-1e-8:raise ValueError('Percurso não termina em segurança')
     lines+=['M5','M2']
     return '\n'.join(lines)+'\n',mapped
@@ -137,7 +176,7 @@ def verify_readback(path,motion,line_map,spindle):
         p=actual[line]
         if None in p.start+p.end:raise ValueError('Estado inicial desconhecido após o posicionamento')
         error=max(math.dist(m['start'],p.start),math.dist(m['end'],p.end));worst=max(worst,error)
-        rapid=m['kind'] in ('travel','retract','clearance_adjust')
+        rapid=m['kind'] in ('travel','retract','clearance_adjust','approach_rapid')
         if p.mode!=(0 if rapid else 1) or error>COORD_ERROR:raise ValueError('Geometria/modo mudou na releitura do NC')
         if not rapid:
             feed_error=abs(p.feed-m['feed_mm_min']);max_feed_error=max(max_feed_error,feed_error)

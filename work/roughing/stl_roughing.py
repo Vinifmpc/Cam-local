@@ -154,7 +154,8 @@ def generate_stl_roughing(triangles,*,diameter,tool_length,stepdown,stepover,
                          raster_origin_y=0.0,strategy='conformal',
                          raster_angle_deg=0.0,compress_collinear=False,
                          region_mode='projected',cleanup_contours=False,domain_mode='expanded',progress=None,
-                         retention=None,center_domain=None,protected_overlap_mm=0.0,defer_depth_staging=False):
+                         retention=None,center_domain=None,protected_overlap_mm=0.0,defer_depth_staging=False,annular_pockets=False,
+                         surface_error=.15,path_tolerance=.02):
     """Generate top-down cutting polylines for a flat cylindrical cutter.
 
     In expanded mode an explicit physical `boundaries` region defines the
@@ -171,8 +172,11 @@ def generate_stl_roughing(triangles,*,diameter,tool_length,stepdown,stepover,
         raise ValueError('Invalid region or domain mode')
     if type(cleanup_contours) is not bool or (cleanup_contours and region_mode!='layer'):
         raise ValueError('Cleanup contours require region_mode=layer')
-    if strategy not in ('conformal','planar'):
-        raise ValueError('Strategy must be conformal or planar')
+    if strategy not in ('conformal','planar','hybrid'):
+        raise ValueError('Strategy must be conformal, planar or hybrid')
+    if not math.isfinite(surface_error) or surface_error<=0 or not math.isfinite(path_tolerance) or path_tolerance<0:
+        raise ValueError('Invalid roughing approximation tolerance')
+    if strategy=='hybrid' and region_mode!='layer':raise ValueError('Desbaste 3D eficiente exige regiões por camada')
     if isinstance(raster_angle_deg,bool) or not isinstance(raster_angle_deg,(int,float)) or not math.isfinite(raster_angle_deg) or not 0<=raster_angle_deg<180:
         raise ValueError('Raster angle must be finite and in [0,180) degrees')
     if type(compress_collinear) is not bool:
@@ -188,6 +192,12 @@ def generate_stl_roughing(triangles,*,diameter,tool_length,stepdown,stepover,
     top=float(high[2]) if z_top is None else z_top
     bottom=float(low[2]) if z_bottom is None else z_bottom
     layers=planejar_camadas(float(low[2]),bottom,top,stepdown,tolerance)
+    floors=[]
+    if strategy=='hybrid':
+        from rough_quality import horizontal_levels,include_floor_levels
+        floors=horizontal_levels(triangles,top=top,bottom=layers[-1].z,axial_allowance=axial_allowance)
+        layers=include_floor_levels(layers,floors,top,stepdown,
+            extra_levels=[retention['plane_z']] if retention is not None else [])
     if retention is not None:
         if region_mode!='layer':raise ValueError('Retenção exterior exige regiões por camada')
         plane=retention['plane_z']
@@ -219,7 +229,9 @@ def generate_stl_roughing(triangles,*,diameter,tool_length,stepdown,stepover,
             phase=raster_origin_y,cleanup=cleanup_contours,compress=compress_collinear,
             retention=retention,
             protected_overlap_mm=protected_overlap_mm,
+            surface_error=surface_error,path_tolerance=path_tolerance,floors=floors,
             defer_depth_staging=defer_depth_staging,
+            annular_pockets=annular_pockets,
             progress=(lambda phase,fraction:progress(phase,.06+.94*fraction)) if progress else None)
         result.update({'schema_version':1,'units':'mm','scope':'experimental_layer_shadow_roughing',
             'tool':{'type':'flat_cylindrical','diameter':diameter,'length':tool_length},
@@ -234,6 +246,12 @@ def generate_stl_roughing(triangles,*,diameter,tool_length,stepdown,stepover,
                 'Only flat cylindrical cutter; no holder/body collision certificate',
                 'No MeshCAM equivalence; stock envelope must match the declared setup']})
         if retention is not None:result['retention']=retention
+        if annular_pockets:result['parameters']['annular_pockets']=True
+        if strategy=='hybrid':
+            from rough_quality import quality_spec
+            result['parameters'].update(surface_error=surface_error,path_tolerance=path_tolerance)
+            result['quality']=quality_spec(triangles,top=top,bottom=layers[-1].z,
+                axial_allowance=axial_allowance,surface_error=surface_error,path_tolerance=path_tolerance)
         return result
     raster=oriented_raster(centers,stepover,raster_origin_y,raster_angle_deg)
     if progress:progress('Calculando contato da fresa com o STL',.12)

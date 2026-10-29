@@ -19,27 +19,32 @@ def command_schema():
     from cam_operations import OperationSettings
     from cam_tools import Tool
     return {'protocol': 1, 'format': 'Um objeto com action, uma lista, ou {commands:[...]}. Execução sequencial; para no primeiro erro.',
-        'units': 'mm, mm/min, segundos; coordenadas no modelo já posicionado',
+        'units': 'mm, mm/min, mm/s² (aceleração), passos/mm, segundos; coordenadas no modelo já posicionado',
         'actions': {
             'schema': {}, 'ping': {}, 'state': {'detail': 'true inclui vértices das regiões'},
+            'controller.ports': {'description':'Lista portas seriais, sem abrir conexão'},
+            'controller.read': {'port':'COM da controladora; libere no CNCjs','baudrate':'padrão 115200; lê estado e $$, sem copiar os campos da estimativa'},
+            'controller.apply': {'port':'COM opcional após controller.read','baudrate':'padrão da última leitura','read_id':'opcional: última leitura da sessão','values':'opcional: {machine_max_rate_mm_min:[X,Y,Z],machine_acceleration_mm_s2:[X,Y,Z]}; padrão são os seis campos da tela. Grava realmente $110–$112 e $120–$122; exige leitura prévia e Idle; não repetir após timeout'},
+            'controller.import': {'description':'Copia para a estimativa os valores da última leitura da controladora; não grava no GRBL'},
             'stl.open': {'path':'arquivo.stl', 'placement':'opcional: units, rotation, translation_mm, xy_origin, z_origin'},
             'project.open': {'path':'projeto.zip'}, 'project.save': {'path':'destino.zip','overwrite':False},
-            'demo.open': {}, 'config.patch': {'settings':'campos parciais','operations':'campos parciais','stock':'x0,y0,x1,y1,step (.25/.5/1)','notes':'texto'},
+            'demo.open': {}, 'config.patch': {'settings':'campos parciais','operations':'campos parciais; cutout_contours: external/internal/all (no Manual)','stock':'x0,y0,x1,y1,step (.25/.5/1)','notes':'texto'},
             'placement.set': {'placement':'units mm/inch, rotation matriz 3x3, translation_mm vetor 3, xy_origin minimum/keep/center, z_origin top/keep/bottom'},
             'placement.panel': {'panel':'rotate/origin/move, ou null para recolher os controles na vista 3D'},
-            'placement.action': {'kind':'rotate: axis x/y/z, turns -1/+1; flip; reset; origin_xy: anchor [0/.5/1,0/.5/1]; origin_z: anchor top/center/bottom; origin_point: point_mm [x,y,z], axes xy/z/xyz; translate: delta_mm [x,y,z]'},
+            'placement.action': {'kind':'rotate: axis x/y/z, turns -1/+1 (90°) ou angle_deg -45/+45; flip; reset; origin_xy: anchor [0/.5/1,0/.5/1]; origin_z: anchor top/center/bottom; origin_point: point_mm [x,y,z], axes xy/z/xyz; translate: delta_mm [x,y,z]'},
             'placement.outline': {'description':'Contornos externos projetados do STL posicionado para selecionar a borda; não muda o projeto'},
             'placement.zero': {'anchor':'left/right/front/back/center; define XY pelos extremos/centro exatos do STL, preservando Z e regiões'},
             'placement.pick': {'enabled':'true inicia seleção da borda na vista de topo; false cancela'},
             'placement.reference': {'point_mm':'[x,y] no sistema atual','snap':'true (padrão) aproxima à borda; apenas preenche a referência, sem aplicar o zero','magnet_mm':'opcional: distância de atração aos quatro pontos alinhados, quando pertencem ao contorno; padrão 0'},
-            'placement.second_side': {'axis':'x ou y (padrão x)','fixture':'obrigatório: {diameter_mm, height_mm}; área circular protegida no centro e altura acima do topo da peça; vira 180°, só Rough na silhueta e abre Zero'},
+            'placement.second_side': {'axis':'current (padrão: mantém a orientação atual), x ou y (giro adicional de 180° explícito)','fixture':'obrigatório: {diameter_mm, height_mm}; protege o centro, marca peça já solta e abre Zero; mantém Inteligente + peça já solta quando ativos, senão prepara Rough manual na silhueta'},
             'placement.undo': {'description':'Recupera a posição, regiões e configuração anteriores à última ação visual, sem alterações posteriores'},
             'tools.list': {}, 'tool.set': {'id':'ID cadastrado, ou tool com campos'},
+            'tool.editor': {'mode':'state/open/set/save/close; usa o mesmo formulário nativo da interface','values':'em set: objeto com nomes dos campos da ferramenta e textos/números; string vazia apaga. Retorna validade nativa e erros, sem salvar até mode:save'},
             'presets.list': {'description':'Presets salvos, com perfis e seleção atual'},
             'presets.save': {'name':'nome do preset','id':'opcional: atualizar preset existente'},
             'presets.apply': {'id':'preset salvo; preserva regiões, posicionamento e profundidades da peça'},
             'presets.delete': {'id':'preset a excluir'},
-            'presets.remember': {'description':'Salva os ajustes atuais como últimos usados, sem criar preset nomeado'},
+            'presets.remember': {'description':'Salva os ajustes atuais no preset selecionado e nos últimos usados; sem seleção, salva somente os últimos usados'},
             'tool.save': {'tool':'registro completo/parcial da ferramenta selecionada','replace':False},
             'regions.add': {'kind':'keepin/keepout','shape':'rectangle: min/max [x,y]; circle: center/radius; ellipse: center/radius_x/radius_y; polygon/freehand: points [[x,y],...]'},
             'regions.remove': {'kind':'keepin/keepout','index':'índice a partir de zero'},
@@ -47,10 +52,11 @@ def command_schema():
             'regions.draw': {'kind':'keepin/keepout','shape':'rectangle/circle/ellipse/polygon/freehand; inicia o desenho após escolher o ícone'},
             'regions.cancel': {'description':'Fecha as formas e cancela o desenho sem criar região'},
             'cutout.recovery.apply': {'description':'Aplica a sugestão ativa de soltar a peça, somente externo, após erro de fresa nos internos; requer novo cálculo'},
+            'cutout.depth': {'depth_mm':'profundidade total positiva a partir do topo do bruto; no inteligente ajusta o corte extra, sem aprofundar o Rough'},
             'regions.clear': {'kind':'keepin/keepout/all'}, 'operation.tab': {'tab':'rough/cutout/drill'},
             'operations.set': {'order':'permutação de [roughing,cutout,drill]; duas IDs legadas também aceitas','enabled':'objeto parcial: roughing/cutout/drill booleanos'},
             'drill.inspect': {'description':'Detecta furos circulares e compara diâmetro/comprimento da fresa e opções do Drill, sem calcular nem alterar o projeto'},
-            'machining.plan': {'description':'Confere o plano inteligente Rough + Cutout sem iniciar cálculo; config.patch operations.machining_mode=smart ativa o modo. Fundo do bruto e pele vazios usam os valores automáticos apresentados no plano.'},
+            'machining.plan': {'description':'Confere o plano inteligente sem iniciar cálculo; config.patch operations.machining_mode=smart ativa. smart_part_released:true calcula somente interior, sem exterior/retenção, mantendo zero e orientação; internos vantajosos livres da fixação podem usar Cutout.'},
             'calculate.start': {}, 'calculate.status': {'job':'opcional; cálculo atual/último por padrão'},
             'calculate.wait': {'job':'opcional','timeout_s':900}, 'calculate.cancel': {'job':'opcional'},
             'nc.export': {'path':'destino.nc','overwrite':False},
@@ -59,8 +65,9 @@ def command_schema():
             'simulation.set': {'mode':'paths/stock','speed':'.1 a 100; 1 = feedrate real','layers':'model/paths/rapids/regions: booleanos'},
             'simulation.play': {}, 'simulation.pause': {},
             'simulation.seek': {'time_s':'segundos, ou fraction entre 0 e 1'},
-            'simulation.reset': {}, 'simulation.wait': {'surface':'grid/solid','timeout_s':120},
-            'simulation.sample': {'points':'1 a 64 posições XY [[x,y],...]; lê a altura das células da grade atual após simulation.wait, sem alterar a reprodução'},
+            'simulation.reset': {}, 'simulation.wait': {'surface':'grid/solid/final/gpu; gpu independe da grade CPU; final espera a superfície final em segundo plano sem mover a reprodução','timeout_s':120},
+            'simulation.sample': {'points':'1 a 64 posições XY [[x,y],...]','surface':'grid (padrão) ou gpu; lê altura e centro das células atuais sem mover a reprodução'},
+            'simulation.benchmark': {'fractions':'1 a 16 frações de reprodução (0..1)','repeats':'1 a 3, até 32 quadros; mede GPU concluída incluindo desenho com gl.finish e restaura reprodução/vista'},
             'diagnostics': {'lines':'últimas linhas do log, 1 a 200'},
             'command.result': {'command_id':'identificador de comando que excedeu o prazo'},
             'app.show': {'description':'Mostra e restaura a janela pelo host nativo, mesmo com a interface suspensa'}, 'app.close': {}},
@@ -114,7 +121,7 @@ class CommandClient:
             raise CommandError('Não foi possível comunicar com o aplicativo: '+str(error)) from error
 
     def ui(self, command):
-        timeout=command.get('timeout_s',30)
+        timeout=command.get('timeout_s',120 if command.get('action') in ('controller.read','controller.apply') else 30)
         submitted=self.http('/api/commands/submit',{'command':command,'timeout_s':min(timeout,300)})
         identifier=submitted['command_id'];deadline=time.monotonic()+timeout+1
         while True:
@@ -189,12 +196,22 @@ class CommandClient:
         if action=='calculate.cancel' and command.get('job'):return self.http('/api/cancel',{'job':command['job']})
         if action=='simulation.wait':
             surface=command.get('surface','grid')
-            if surface not in ('grid','solid'):raise CommandError('surface deve ser grid ou solid')
+            if surface not in ('grid','solid','final','gpu'):raise CommandError('surface deve ser grid, solid, final ou gpu')
             deadline=time.monotonic()+command.get('timeout_s',120)
             while True:
                 state=self.ui({'action':'state'})['simulation']
+                if surface=='gpu':
+                    gpu=state.get('gpu',{})
+                    if not gpu.get('available'):raise CommandError(gpu.get('error') or 'Superfície GPU indisponível. Calcule os percursos primeiro.',state=state)
+                    if gpu.get('ready') and gpu.get('target')==state['stock_target']:return state
+                if surface=='final':
+                    preparation=state.get('solid_precompute',{})
+                    if preparation.get('status')=='ready':return state
+                    if preparation.get('status')=='error':raise CommandError(preparation.get('error') or 'Não foi possível reconstruir a superfície final.',state=state)
+                    if preparation.get('status')=='skipped':raise CommandError(preparation.get('error') or 'Cache final indisponível; use surface gpu para a posição atual.',state=state)
+                    if preparation.get('status')=='idle':raise CommandError('Calcule os percursos antes de preparar a superfície final.',state=state)
                 ready=state['stock_ready'] and not state['stock_busy'] and state['stock_applied']==state['stock_target']
-                if ready and (surface=='grid' or state['solid_ready']):return state
+                if surface not in ('final','gpu') and ready and (surface=='grid' or state['solid_ready']):return state
                 if time.monotonic()>deadline:raise CommandError('A simulação não ficou pronta dentro do prazo.',state=state)
                 time.sleep(.3)
         if action=='app.show':return self.http('/api/window/show',{})

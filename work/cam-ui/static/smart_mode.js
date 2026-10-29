@@ -2,11 +2,26 @@
 // and the user's feeds. Geometry and stock decisions belong to the backend.
 import {automaticRegionText} from './automatic_regions.js';
 export const SMART_SEQUENCE=['drill','roughing','cutout'];
+export function smartReleaseDepths(stockTop,modelBottom,stockBottom=null,breakthrough=0){
+ if(![stockTop,modelBottom,breakthrough].every(Number.isFinite)||breakthrough<0||
+    (stockBottom!==null&&!Number.isFinite(stockBottom)))throw Error('Informe profundidades e corte extra válidos.');
+ const bottom=stockBottom??modelBottom;
+ if(bottom>modelBottom+1e-8)throw Error('O fundo do bruto deve ficar no fundo do STL ou abaixo dele.');
+ if(stockTop<=modelBottom)throw Error('O topo do bruto deve ficar acima do fundo da peça.');
+ return {rough_depth_mm:stockTop-modelBottom,stock_depth_mm:stockTop-bottom,
+  cutout_depth_mm:stockTop-bottom+breakthrough,cutout_bottom_mm:bottom-breakthrough};
+}
+export function breakthroughForCutDepth(depth,stockTop,modelBottom,stockBottom=null){
+ const base=smartReleaseDepths(stockTop,modelBottom,stockBottom).stock_depth_mm;
+ if(!Number.isFinite(depth)||depth<=0)throw Error('Profundidade do Cutout: informe um número positivo.');
+ if(depth<base-1e-8)throw Error(`Para soltar a peça, a profundidade do Cutout deve ser de pelo menos ${base} mm. Ajuste a espessura em Bruto e retenção se necessário.`);
+ return Math.max(0,Math.round((depth-base)*1e9)/1e9);
+}
 export function isSmartMachining(options={}){return options.machining_mode==='smart';}
 export function effectiveMachiningOptions(options={}){
  if(!isSmartMachining(options))return {...options};
  return {...options,order:'roughing_then_cutout',operation_sequence:[...SMART_SEQUENCE],
-  roughing_enabled:true,cutout_enabled:true,cutout_contours:'external',cutout_use_prior_roughing:true};
+  roughing_enabled:true,cutout_enabled:true,cutout_contours:options.smart_part_released?'internal':'external',cutout_use_prior_roughing:true};
 }
 export function validateSmartOperationPatch(command={}){
  if(command.order!==undefined||command.enabled?.roughing===false||command.enabled?.cutout===false)
@@ -16,6 +31,10 @@ export function smartEntryHint(centerCutting){
  return centerCutting?'Corte pelo centro confirmado: quando a rampa não couber, o Rough inteligente pode usar mergulho de até um Stepdown, com o Plunge rate.':'Mergulho central desativado. A confirmação “Minha fresa corta pelo centro”, acima dos parâmetros das operações, permite essa alternativa à rampa no Rough inteligente.';
 }
 export function smartPolicyText(plan){
+ if(plan?.part_released)return {
+  order:'Peça já solta: Rough no interior e Cutout somente nos internos vantajosos. O exterior fica fora do plano.',
+  regions:'A área automática fica dentro da peça e respeita a fixação protegida por Keep Out. Rebaixos e bolsões ficam no Rough.',
+  reuse:'Recortes internos são usados somente quando vantajosos e completos, sem invadir os limites ou a fixação. Sem recorte interno selecionado, o Cutout não tem movimentos.'};
  const mode=plan?.exterior_strategy?.mode;
  if(plan?.internal_cutouts?.selected_count>0)return {
   order:'Rough: rebaixos e bolsões com fundo. Cutout: recortes internos passantes antes do contorno externo completo.',
@@ -40,7 +59,11 @@ export function smartPlanText(plan,format=v=>String(v)){
  const sequence=(plan.sequence||[]).map(id=>labels[id]||id).join(' → ');
  const strategy=plan.exterior_strategy,fullContour=strategy?.mode==='features_then_cutout';
  const details=[sequence];
- if(fullContour){
+ if(plan.part_released){
+  details.push(`Peça já solta: Rough somente no interior até Z ${format(plan.roughing_bottom_mm)} mm, respeitando Keep In e Keep Out.`,
+   plan.internal_cutouts?.selected_count>0?`Cutout: ${plan.internal_cutouts.selected_count} recorte(s) interno(s) até Z ${format(plan.cutout_bottom_mm)} mm, sem recorte externo.`:'Nenhum recorte interno selecionado: Cutout sem movimentos.',
+   'Sem canal externo ou pele de retenção. A orientação e o zero são mantidos.');
+ }else if(fullContour){
   details.push(`Rough: rebaixos e bolsões, inclusive abertos à borda, e furos compatíveis; limite Z ${format(plan.roughing_bottom_mm)} mm. O perfil externo completo fica para o Cutout.`,
    `Cutout: contorno externo completo até Z ${format(plan.cutout_bottom_mm)} mm, em camadas de até ${format(plan.cutout_stepdown_mm)} mm.`,
    'Peças sem furos ou rebaixos podem ficar sem cortes de Rough.');
@@ -55,7 +78,7 @@ export function smartPlanText(plan,format=v=>String(v)){
   details.push(`Rough até Z ${format(plan.roughing_bottom_mm)} mm; pele externa de ${format(plan.skin_mm)} mm, até Z ${format(plan.retention_z_mm)} mm.`,
    `Cutout externo até Z ${format(plan.cutout_bottom_mm)} mm; descida máxima de ${format(plan.cutout_stepdown_mm)} mm.`);
  }
- details.push('Keep In / Keep Out continuam valendo para o Rough. O recorte solta o exterior no final.');
+ if(!plan.part_released)details.push('Keep In / Keep Out continuam valendo para o Rough. O recorte solta o exterior no final.');
  if(typeof strategy?.reason==='string'&&strategy.reason&&!plan.assumptions?.includes(strategy.reason))details.push(strategy.reason);
  const automatic=automaticRegionText(plan,format);if(automatic)details.push(automatic);
  if(plan.assumptions?.length)details.push(...plan.assumptions);

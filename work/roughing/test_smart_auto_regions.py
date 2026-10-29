@@ -94,6 +94,36 @@ class SmartAutoRegionTests(unittest.TestCase):
         self.assertFalse(_edge_in_domain([a[0]-1e-4,a[1]-1e-4,-1],
                                          [b[0]-1e-4,b[1]-1e-4,-1],region))
 
+    def test_all_smart_source_domains_have_inset_without_enlarging_proof_domain(self):
+        from region_core import offset,boolean,pyclipr,signed_area
+        _,_,report=resolve_smart_plan(box(),self.tool,self.s,self.options)
+        auto=report['automatic_regions']
+        self.assertEqual(auto['delegated_internal_openings'],[])
+        self.assertEqual(auto['source_domain_inset_mm'],.00001)
+        expected=[p.tolist() for p in offset(auto['polygons_mm'],-.00001)]
+        self.assertEqual(auto['source_polygons_mm'],expected)
+        self.assertFalse(boolean(expected,auto['polygons_mm'],pyclipr.Difference))
+        self.assertLess(sum(signed_area(p) for p in expected),auto['area_mm2'])
+
+    def test_layer_difference_rounding_stays_inside_independent_proof_after_source_inset(self):
+        from region_core import offset,boolean,pyclipr
+        # Synthetic shallow intersection: rounding the new cleanup endpoint
+        # can put a short part of its incoming edge outside the source domain.
+        domain=[[[0,0],[20,0],[20,20],[.858281,20]]]
+        forbidden=[[[-5,-5],[2.672734,-5],[-.062105,9.680667],[-5,9.680667]]]
+        def sampled_edges(source):
+            for path in boolean(source,forbidden,pyclipr.Difference):
+                for a,b in zip(path,np.roll(path,-1,axis=0)):
+                    for fraction in (0,.1,.5,.9):
+                        yield [*(a+(b-a)*fraction),-1],[*b,-1]
+        self.assertTrue(any(not _edge_in_domain(a,b,domain) for a,b in sampled_edges(domain)))
+        # Use the actual generator's inset, which is also applied when no
+        # through opening has been delegated to Cutout.
+        _,_,report=resolve_smart_plan(box(),self.tool,self.s,self.options)
+        inset=report['automatic_regions']['source_domain_inset_mm']
+        self.assertTrue(all(_edge_in_domain(a,b,domain) for a,b in sampled_edges(offset(domain,-inset))))
+        self.assertFalse(_edge_in_domain([-.0001,0,-1],[-.0001,1,-1],domain))
+
     def test_internal_through_hole_keeps_3d_rough_to_bottom_below_exterior_skin(self):
         result,project=self.calculate(plate(outer_radius=4,hole_radius=1.8,bottom=-2,vertices=24))
         plane_z=result['smart_plan']['retention_z_mm']

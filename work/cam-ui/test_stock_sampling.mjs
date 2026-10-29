@@ -30,11 +30,11 @@ assert.equal(removed.samples[0].z_mm,-3);assert.equal(removed.samples[1].z_mm,5,
 const source=fs.readFileSync(new URL('./static/app.js',import.meta.url),'utf8'),nodes=new Map(),posts=[];
 const $=id=>{if(!nodes.has(id))nodes.set(id,{style:{},textContent:'',hidden:false});return nodes.get(id);};
 const context=vm.createContext({THREE,$,sampleStockGrid,stockGridIndices,smoothWallNormals,
- worker:{postMessage:value=>posts.push(value)},scene:new THREE.Scene(),mode:'paths',stockMesh:null,stockWire:null,
+ worker:{postMessage:value=>posts.push(value)},scene:new THREE.Scene(),mode:'paths',stockMesh:null,stockWire:null,gpuStock:null,
  stockGeneration:7,stockBusy:true,stockReady:false,stockWanted:10,stockApplied:-1,stockSampleSnapshot:null,
  data:{},tool:{diameter_mm:1},settings:{boundaries_mm:[],exclusions_mm:[]},motion:null,smart:true,
  smartModeEnabled:()=>context.smart,showStockSurface(){},scheduleSolid(){},requestStock(){context.requestCount++;},requestCount:0,
- fmt:value=>String(value),toast(){},cancelSolid(){},solidFailedIndex:null,solidIndex:-1,solidGeneration:-1,solidMesh:null,
+ fmt:value=>String(value),toast(){},resetSolid(){},prepareSolidBackground(){},solidFailedIndex:null,solidIndex:-1,solidGeneration:-1,solidMesh:null,
  stockLastSent:0,stockConfig:null,readStockSettings:()=>({x0:-2,y0:10,x1:3,y1:13.5,step:1.75}),number:()=>5,simulationBottom:()=>-7});
 vm.runInContext(source.slice(source.indexOf('worker.onmessage=({data:s})=>{'),source.indexOf('function setMode(')),context);
 const commandCode=source.slice(source.indexOf(" if(action==='simulation.sample'){"),source.indexOf(" if(action==='simulation.set'){"));

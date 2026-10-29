@@ -12,12 +12,14 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 def main():
+    if hasattr(sys.stdout,'reconfigure'):sys.stdout.reconfigure(encoding='utf8')
     parser=argparse.ArgumentParser();parser.add_argument('--report',type=Path)
     args=parser.parse_args();node=shutil.which('node')
     if not node:raise SystemExit('Node.js não encontrado. Execute scripts/setup.ps1.')
     commands=[[sys.executable,'-m','unittest','discover','-s',folder,'-p','test_*.py']
               for folder in ('work/roughing','work/cam-ui')]
     commands += [[node,str(path.relative_to(ROOT))] for path in sorted((ROOT/'work/cam-ui').glob('test_*.mjs'))]
+    commands += [[node,str(path.relative_to(ROOT))] for path in sorted((ROOT/'work/cncjs-widget').glob('test_*.mjs'))]
     commands += [[node,'--check','work/cam-ui/static/app.js']]
     results=[]
     for command in commands:

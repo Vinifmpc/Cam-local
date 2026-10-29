@@ -152,7 +152,8 @@ def detect_circular_holes(triangles,*,tolerance=.03):
 
 
 def _parameters(*,diameter,tool_length,stock_top,bottom,peck,tolerance,allow_helix,
-                center_cutting,clearance,obstacle_top,entry_angle_deg,max_moves,compensate_facets=False):
+                center_cutting,clearance,obstacle_top,entry_angle_deg,max_moves,compensate_facets=False,
+                retract_mode='full',retract_mm=1.,rapid_reentry=True,reentry_gap=.25,fixture_travel=None):
     for value,key in ((diameter,'diâmetro'),(tool_length,'comprimento'),(peck,'passo vertical'),
                       (tolerance,'tolerância'),(clearance,'folga')):
         positive(value,'Drill: '+key)
@@ -161,6 +162,9 @@ def _parameters(*,diameter,tool_length,stock_top,bottom,peck,tolerance,allow_hel
             raise ValueError('Drill: altura inválida')
     if any(type(value) is not bool for value in (allow_helix,center_cutting,compensate_facets)):
         raise ValueError('Drill: opções de hélice e corte central precisam ser booleanas')
+    if type(rapid_reentry) is not bool:raise ValueError('Drill: retorno rápido deve ser booleano')
+    if retract_mode not in ('full','chip_break'):raise ValueError('Drill: modo de retração inválido')
+    positive(retract_mm,'Drill: subida entre mergulhos');positive(reentry_gap,'Drill: folga de reentrada')
     if not center_cutting:raise ValueError('Drill: confirme que a fresa permite corte central/mergulho')
     positive(entry_angle_deg,'Drill: ângulo de hélice')
     if entry_angle_deg>=45:raise ValueError('Drill: ângulo de hélice precisa ser menor que 45 graus')
@@ -170,7 +174,9 @@ def _parameters(*,diameter,tool_length,stock_top,bottom,peck,tolerance,allow_hel
         bottom=None if bottom is None else float(bottom),peck=float(peck),tolerance=float(tolerance),
         allow_helix=allow_helix,center_cutting=center_cutting,compensate_facets=compensate_facets,clearance=float(clearance),
         obstacle_top=float(stock_top if obstacle_top is None else obstacle_top),
-        entry_angle_deg=float(entry_angle_deg),max_moves=max_moves)
+        entry_angle_deg=float(entry_angle_deg),max_moves=max_moves,retract_mode=retract_mode,
+        retract_mm=float(retract_mm),rapid_reentry=rapid_reentry,reentry_gap=float(reentry_gap),
+        **({'fixture_travel':fixture_travel} if fixture_travel is not None else {}))
 
 
 def _compatibility(hole,*,diameter,tool_length,stock_top,bottom,tolerance,allow_helix,center_cutting,compensate_facets=False):
@@ -237,13 +243,18 @@ def _build(triangles,p,initial_position):
     if (len(initial)!=3 or not all(isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) for v in initial)
             or initial[2]<safe_z-EPS):raise ValueError('Drill: posição inicial precisa estar no plano de segurança')
     current=initial.copy();moves=[];entries=[];layers=[]
+    from fixture_travel import FixtureTravel
+    fixture_route=FixtureTravel(p.get('fixture_travel'))
     def emit(kind,end,hole,**proof):
         nonlocal current
         end=[float(v) for v in end]
         if math.dist(current,end)<=EPS:return
         if len(moves)>=p['max_moves']:raise ValueError('Drill: cálculo excedeu o limite de movimentos')
-        moves.append({'id':len(moves),'kind':kind,'start':current.copy(),'end':end,
-            'layer':None,'polyline':None,'proof':{'hole_id':hole['id'],**proof}});current=end
+        destinations=fixture_route.route(current,end)[1:] if kind=='travel' else [end]
+        for destination in destinations:
+            moves.append({'id':len(moves),'kind':kind,'start':current.copy(),'end':list(destination),
+                'layer':None,'polyline':None,'proof':{'hole_id':hole['id'],**proof,
+                **({'fixture_detour':True} if len(destinations)>1 else {})}});current=list(destination)
     for hole in holes:
         center=hole['center'];target=hole['target_z'];points=[];start_index=len(moves)
         if current[2]>safe_z+EPS:emit('clearance_adjust',[*current[:2],safe_z],hole)
@@ -257,9 +268,19 @@ def _build(triangles,p,initial_position):
                 end_z=p['stock_top']+(target-p['stock_top'])*(index+1)/count
                 emit('cut',[*center,end_z],hole,peck=index,maximum_new_depth_mm=prior-end_z)
                 points.extend([moves[-1]['start'],moves[-1]['end']])
-                emit('retract',[*center,safe_z],hole)
-                # Next descent starts at the exact already cut floor.
-                if index+1<count:emit('approach',[*center,end_z],hole,cleared_to_z=end_z)
+                last=index+1==count
+                retract_z=(safe_z if last or p['retract_mode']=='full'
+                           else min(safe_z,end_z+p['retract_mm']))
+                emit('retract',[*center,retract_z],hole)
+                if not last:
+                    # Only this hole's completed peck proves the empty prism.
+                    # Stop the rapid above its floor and feed the last gap;
+                    # no rapid enters the next uncut depth. XY stays fixed.
+                    if p['rapid_reentry']:
+                        emit('travel',[*center,min(retract_z,end_z+p['reentry_gap'])],hole,
+                             drill_phase='cleared_reentry',cleared_to_z=end_z,
+                             reentry_gap_mm=p['reentry_gap'])
+                    emit('approach',[*center,end_z],hole,cleared_to_z=end_z)
                 prior=end_z
         else:
             # A tiny guard absorbs float/NC quantisation. The circle stays in
@@ -317,12 +338,14 @@ def _build(triangles,p,initial_position):
 
 def generate_drill(triangles,*,diameter,tool_length,stock_top,bottom=None,peck=1.,tolerance=.03,
                    allow_helix=False,center_cutting=False,clearance=2.54,obstacle_top=None,
-                   initial_position=None,entry_angle_deg=3.,max_moves=MAX_MOVES,progress=None,compensate_facets=False):
+                   initial_position=None,entry_angle_deg=3.,max_moves=MAX_MOVES,progress=None,compensate_facets=False,
+                   retract_mode='full',retract_mm=1.,rapid_reentry=True,reentry_gap=.25,fixture_travel=None):
     if progress:progress('Identificando furos circulares e pisos protegidos',0)
     p=_parameters(diameter=diameter,tool_length=tool_length,stock_top=stock_top,bottom=bottom,
         peck=peck,tolerance=tolerance,allow_helix=allow_helix,center_cutting=center_cutting,
         clearance=clearance,obstacle_top=obstacle_top,entry_angle_deg=entry_angle_deg,max_moves=max_moves,
-        compensate_facets=compensate_facets)
+        compensate_facets=compensate_facets,retract_mode=retract_mode,retract_mm=retract_mm,
+        rapid_reentry=rapid_reentry,reentry_gap=reentry_gap,fixture_travel=fixture_travel)
     job,plan=_build(triangles,p,initial_position)
     if progress:progress('Conferindo diâmetros, profundidades e movimentos Drill',.8)
     plan['validation']=validate_drill_motion(plan,job,triangles)
@@ -339,7 +362,8 @@ def validate_drill_motion(plan,job,triangles):
     try:
         p=_parameters(**{k:job['parameters'][k] for k in (
             'diameter','tool_length','stock_top','bottom','peck','tolerance','allow_helix',
-            'center_cutting','clearance','obstacle_top','entry_angle_deg','max_moves','compensate_facets')})
+            'center_cutting','clearance','obstacle_top','entry_angle_deg','max_moves','compensate_facets',
+            'retract_mode','retract_mm','rapid_reentry','reentry_gap')},fixture_travel=job['parameters'].get('fixture_travel'))
         expected_job,expected=_build(triangles,p,plan['initial_position'])
         if job!=expected_job:raise ValueError('Drill: geometria fonte, furos ou ferramenta mudaram')
         for key in ('tool','stock_top','obstacle_top','safe_z','parameters','initial_position','final_position','entries'):

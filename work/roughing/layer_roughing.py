@@ -16,7 +16,7 @@ def _initialize_layer_workers(triangles,centers):
 
 def _layer_sources(triangles,centers,task):
     from stl_roughing import oriented_raster
-    index,height,radius,conformal,stepover,phase,angle,cleanup,retained=task
+    index,height,radius,conformal,stepover,phase,angle,cleanup,retained,path_tolerance,*pocket_options=task
     if retained is not None:
         from region_core import boolean,pyclipr
         centers=boolean(centers,retained,pyclipr.Intersection) if centers and retained else []
@@ -24,10 +24,18 @@ def _layer_sources(triangles,centers,task):
     rasters=oriented_raster(regions,stepover,phase,angle)
     sources=[('raster',s['row'],[s['start'],s['end']]) for s in rasters]
     if cleanup:
-        sources.extend(('cleanup',None,np.vstack([loop,loop[0]]).tolist())
+        from rough_quality import simplify_allowed_loop
+        sources.extend(('cleanup',None,simplify_allowed_loop(loop,regions,path_tolerance))
                        for loop in regions if len(loop)>=3)
-    return index,{'regions':len(regions),'center_area_mm2':region_area(regions),
-                  'shadow_plane_z':height,'polylines':[]},sources
+    metadata={'regions':len(regions),'center_area_mm2':region_area(regions),'shadow_plane_z':height,'polylines':[]}
+    if pocket_options and pocket_options[0] and not conformal and cleanup:
+        from annular_pocket import annular_contours
+        candidate=annular_contours(regions,stepover=stepover,tool_radius=pocket_options[1],tolerance=path_tolerance,
+            raster_length=sum(math.dist(s['start'],s['end']) for s in rasters),
+            cleanup_length=sum(math.dist(a,b) for kind,_,p in sources if kind=='cleanup' for a,b in zip(p,p[1:])),
+            raster_count=len(rasters))
+        if candidate is not None:sources,metadata['annular_pocket']=candidate
+    return index,metadata,sources
 
 
 def _layer_sources_worker(task):
@@ -35,7 +43,7 @@ def _layer_sources_worker(task):
 
 
 def prepare_layer_sources(triangles,centers,layers,*,radius,top,axial_allowance,
-        strategy,stepover,phase,angle,cleanup,progress=None,retention=None):
+        strategy,stepover,phase,angle,cleanup,progress=None,retention=None,path_tolerance=0,annular_pockets=False,tool_radius=None):
     """Calculate independent layer polygons on separate CPU processes.
 
     Completion callbacks are made only in the caller process. Return values
@@ -44,10 +52,11 @@ def prepare_layer_sources(triangles,centers,layers,*,radius,top,axial_allowance,
     """
     tasks=[];upper=top
     for index,layer in enumerate(layers):
-        height=(upper if strategy=='conformal' else layer.z)-axial_allowance
+        height=(upper if strategy in ('conformal','hybrid') else layer.z)-axial_allowance
         retained=(retention['center_regions_mm'] if retention is not None
                   and layer.z<retention['plane_z']-1e-8 else None)
-        tasks.append((index,height,radius,strategy=='conformal',stepover,phase,angle,cleanup,retained))
+        tasks.append((index,height,radius,strategy in ('conformal','hybrid'),stepover,phase,angle,cleanup,retained,path_tolerance)
+                     +((True,tool_radius) if annular_pockets else ()))
         upper=layer.z
     workers=geometry_workers(len(tasks),len(triangles)*len(tasks))
     output=[None]*len(tasks)
@@ -68,7 +77,8 @@ def prepare_layer_sources(triangles,centers,layers,*,radius,top,axial_allowance,
 
 def generate_layer_paths(triangles,centers,layers,*,diameter,tool_length,stepover,
         sampling,top,axial_allowance,radial_allowance,strategy,angle,phase,
-        cleanup,compress,progress=None,retention=None,protected_overlap_mm=0.0,defer_depth_staging=False):
+        cleanup,compress,progress=None,retention=None,protected_overlap_mm=0.0,defer_depth_staging=False,
+        surface_error=.15,path_tolerance=.02,floors=(),annular_pockets=False):
     # Import at call time: shared primitives live in the backwards-compatible
     # legacy engine, which dispatches here only for region_mode='layer'.
     from stl_roughing import contact_paths,simplify_collinear
@@ -82,6 +92,8 @@ def generate_layer_paths(triangles,centers,layers,*,diameter,tool_length,stepove
         axial_allowance=axial_allowance,strategy=strategy,stepover=stepover,phase=phase,
         angle=angle,cleanup=cleanup,
         retention=retention,
+        path_tolerance=path_tolerance if strategy in ('hybrid','planar') else 0,
+        annular_pockets=annular_pockets,tool_radius=diameter/2,
         progress=(lambda phase,fraction:progress(phase,.2*fraction)) if progress else None)
     for index,metadata,sources in prepared_layers:
         layer=layers[index]
@@ -110,7 +122,10 @@ def generate_layer_paths(triangles,centers,layers,*,diameter,tool_length,stepove
         bounds[:-1]=np.maximum(bounds[:-1],edge);bounds[1:]=np.maximum(bounds[1:],edge)
         closed=math.dist(points[0,:2],points[-1,:2])<1e-8
         if closed:bounds[0]=bounds[-1]=max(bounds[0],bounds[-1])
-        if strategy=='conformal':
+        if strategy in ('conformal','hybrid'):
+            if strategy=='hybrid':
+                from rough_quality import bounded_contact_heights
+                bounds=bounded_contact_heights(bounds,top=top,max_extra=surface_error,floors=floors)
             z=np.maximum(bounds,layers[li].z)
             active=np.maximum(z[:-1],z[1:])<upper-1e-8
         else:
@@ -138,13 +153,26 @@ def generate_layer_paths(triangles,centers,layers,*,diameter,tool_length,stepove
     for index,(layer,metadata) in enumerate(zip(layers,layer_metadata,strict=True)):
         output.append({'index':index,**asdict(layer),'upper_z':upper,**metadata})
         upper=layer.z
+    if annular_pockets and any(layer.get('annular_pocket') and (
+            len(layer['polylines'])!=layer['annular_pocket']['loops'] or
+            any(not p['closed'] for p in layer['polylines'])) for layer in output):
+        # Coverage was certified for complete loops. If contact filtering
+        # fragments one of them, regenerate with the original raster strategy.
+        return generate_layer_paths(triangles,centers,layers,diameter=diameter,tool_length=tool_length,
+            stepover=stepover,sampling=sampling,top=top,axial_allowance=axial_allowance,
+            radial_allowance=radial_allowance,strategy=strategy,angle=angle,phase=phase,
+            cleanup=cleanup,compress=compress,progress=progress,retention=retention,
+            protected_overlap_mm=protected_overlap_mm,defer_depth_staging=defer_depth_staging,
+            surface_error=surface_error,path_tolerance=path_tolerance,floors=floors,annular_pockets=False)
     from depth_staging import stage_paths
+    pruning={}
     preclear=(0 if defer_depth_staging else stage_paths(output,diameter=diameter,stock_top=top,
         stepdown=max(layer.passo for layer in layers),
+        prune_redundant=strategy=='hybrid',stats=pruning,
         progress=(lambda phase,fraction:progress(phase,.5+.48*fraction)) if progress else None))
     paths=[p for layer in output for p in layer['polylines']]
     if progress:progress('Passadas de desbaste concluídas',1)
-    return {'layers':output,'sampled_primary_cutting_edges':raw_edges,
+    return {'layers':output,**pruning,'sampled_primary_cutting_edges':raw_edges,
         'preclear_cutting_edges':sum(len(p['points'])-1 for p in paths if p['kind']=='preclear'),
         'cutting_edges':sum(len(p['points'])-1 for p in paths),'preclear_polyline_count':preclear,
         'cutting_length_mm':sum(math.dist(a,b) for p in paths for a,b in zip(p['points'],p['points'][1:])),

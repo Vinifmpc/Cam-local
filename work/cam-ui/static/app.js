@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import {FeedClock,timeLabel} from './playback.js';
-import {activeStockBottom,stockGridIndices,sampleStockGrid} from './stock_model.js';
+import {activeStockBottom,stockGridIndices,sampleStockGrid,visualStockConfig} from './stock_model.js';
+import {createGpuStock} from './stock_gpu.js';
 import {smoothWallNormals} from './stock_shading.js';
-import {numericValue,readOperationValues,validateTimingFeeds,importedMachiningState,jobStatusText,calculationSummary,cutoutPreferences,priorRoughingAvailable,addRoughingRegion,isAutomaticStockBoundary} from './form_state.js';
+import {normalizeSolidTarget} from './stock_solid.js';
+import {numericValue,readOperationValues,validateTimingFeeds,importedMachiningState,jobStatusText,calculationSummary,cutoutPreferences,priorRoughingAvailable,addRoughingRegion,isAutomaticStockBoundary,TIMING_AXIS_FIELDS,TIMING_SCALAR_FIELDS,TIMING_FORM_IDS,timingFormValues,timingControlState} from './form_state.js';
 import {OrbitControls} from '/vendor/OrbitControls.js';
 import {SHAPE_NAMES,MAX_REGION_VERTICES,rectanglePolygon,roundPolygon,freehandPolygon,validateRegionPolygon,parseRegionVertices} from './region_shapes.js';
 import {runCommandBridge} from './command_bridge.js';
@@ -10,16 +12,17 @@ import {createDepthMaterial,depthScale,depthGradient} from './depth_shading.js';
 import {createOperationList,operationListFromOptions,operationOptionsFromList,mergeOperationOptions} from './operation_list.js';
 import {createRegionPicker} from './region_picker.js';
 import {getCutoutRecovery} from './cutout_feedback.js';
-import {effectiveMachiningOptions,validateSmartOperationPatch,smartPlanText,smartEntryHint,smartPolicyText} from './smart_mode.js';
+import {effectiveMachiningOptions,validateSmartOperationPatch,smartPlanText,smartEntryHint,smartPolicyText,smartReleaseDepths,breakthroughForCutDepth} from './smart_mode.js';
 import {createAutomaticRegionOverlay,smartPlanForState} from './automatic_regions.js';
 import {placementAction,placementOrigin,samePlacement,nearestOutlinePoint,shiftWorkFrame,secondSideState,ORIGIN_REFERENCES,originReferences,originReferenceId,magneticOutlinePoint} from './placement_controls.js';
-import {machiningProfile,profilePatch} from './machining_presets.js';
+import {machiningProfile,profilePatch,rememberProfileRequest} from './machining_presets.js';
+import {createGrblProfile,grblProfileValues,grblProfileRows} from './grbl_profile.js';
 const $=id=>document.getElementById(id),fmt=(v,d=2)=>Number(v).toLocaleString('pt-BR',{maximumFractionDigits:d});
 const flip=[[1,0,0],[0,-1,0],[0,0,-1]];
 const identity=[[1,0,0],[0,1,0],[0,0,1]];
 const rect=(x0,y0,x1,y1)=>[[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
 let token='',tools=[],data=null,tool=null,settings={},placement={},motion=null,windows=null,operations={},feedClock=null,computedProject=null,exportBusy=false;
-let presetStore={presets:[],last_used:null,selected_id:null},presetTimer=null,presetQueue=Promise.resolve(),presetSaving=false,presetError='';
+let presetStore={presets:[],last_used:null,selected_id:null},presetTimer=null,presetRememberSelected=false,presetQueue=Promise.resolve(),presetSaving=false,presetError='';
 let revision=0,playing=false,cursor=0,lastTime=0,busy=false,mode='paths',drawMode=null,dragStart=null,preview=null;
 let drawShape=null,draftPoints=[],drawingPointer=null,pendingRegionShape='rectangle';
 let calcProgressTimer=null,calcProgressStarted=0,calcProgressValue=null,activeCalculationJob=null,cancellationRequested=false;
@@ -34,6 +37,12 @@ try{depthColoring=localStorage.getItem('cam-depth-colors')!=='false';}catch{}
 let stockGeneration=0,stockBusy=false,stockReady=false,stockWanted=0,stockApplied=-1,stockLastSent=0,toastTimer;
 let stockSampleSnapshot=null;
 let solidWorker=null,solidBusy=false,solidMesh=null,solidIndex=-1,solidGeneration=-1,solidTimer=null,stockConfig=null,solidFailedIndex=null;
+let solidWorkerReady=false,solidWorkerFailed=false,solidActive=null,solidDisplayWanted=null,solidRequestId=0;
+let solidCache=new Map(),solidCacheBytes=0,solidMainHits=0,solidFailures=new Map();
+let solidWorkerStats={builds:0,hits:0,entries:0,bytes:0,budget_bytes:64*1024*1024,max_entries:8};
+let solidPrefetch={status:'idle',target:null,progress:0};
+const SOLID_CACHE_BYTES=64*1024*1024,SOLID_CACHE_ENTRIES=8;
+let gpuStock=null,gpuStockGeneration=-1,gpuStockError=null,gpuConfig=null;
 const worker=new Worker('/stock_worker.js',{type:'module'});
 function toast(message,error=false,action=null){
  const host=$('toast');host.replaceChildren(document.createTextNode(message));host.className=error?'error':'';host.hidden=false;
@@ -114,41 +123,190 @@ async function cancelCalculation(){
 }
 function stop(){playing=false;$('play').textContent='▶ Reproduzir';$('play').setAttribute('aria-label','Reproduzir');$('play').setAttribute('aria-pressed','false');}
 function showStockSurface(){
+ updateGpuStock();
+ const gpu=gpuStockState();
+ if(gpuStock)gpuStock.object.visible=mode==='stock'&&gpu.ready;
+ if(gpu.ready){
+  if(solidMesh)solidMesh.visible=false;if(stockMesh)stockMesh.visible=false;if(stockWire)stockWire.visible=false;
+  $('surfaceStatus').textContent=`Remoção 2,5D · GPU · ${gpu.resolution?.join(' × ')} · ${fmt(gpu.dx_mm,3)} mm/amostra`;
+  return;
+ }
  const ready=solidMesh&&solidGeneration===stockGeneration&&solidIndex===stockWanted&&!playing&&stockReady;
  if(solidMesh)solidMesh.visible=mode==='stock'&&!!ready;
  if(stockMesh)stockMesh.visible=mode==='stock'&&stockReady&&!ready;
  if(stockWire)stockWire.visible=mode==='stock'&&stockReady;
- if(ready)$('surfaceStatus').textContent='Superfície sólida · bordas pelo percurso da fresa';
+ if(ready)$('surfaceStatus').textContent='Superfície sólida · bordas pelo percurso da fresa'+(solidPrefetch.status==='running'?` · final ${Math.round(solidPrefetch.progress*100)}%`: '');
  else if(playing)$('surfaceStatus').textContent='Prévia rápida durante reprodução';
- else if(mode==='stock')$('surfaceStatus').textContent=solidBusy?'Reconstruindo superfície…':'Prévia em grade';
+ else if(solidActive?.purpose==='display')$('surfaceStatus').textContent='Reconstruindo esta posição…';
+ else if(['queued','running'].includes(solidPrefetch.status))$('surfaceStatus').textContent=`Preparando superfície final · ${Math.round(solidPrefetch.progress*100)}% · em segundo plano`;
+ else if(mode==='stock'&&solidFailures.has(solidKey(stockWanted)))$('surfaceStatus').textContent='Prévia em grade · '+solidFailures.get(solidKey(stockWanted));
+ else if(solidPrefetch.status==='ready')$('surfaceStatus').textContent=mode==='stock'?'Prévia em grade · superfície final pronta':'Superfície final pronta · disponível em Remoção';
+ else $('surfaceStatus').textContent='Prévia em grade';
 }
+function gpuStockState(){
+ if(!gpuStock)return {available:false,ready:false,error:gpuStockError,generation:stockGeneration};
+ const state=gpuStock.state();
+ return {...state,ready:state.ready&&gpuStockGeneration===stockGeneration&&state.target===stockWanted,
+  generation:gpuStockGeneration,physical_bottom:gpuConfig.physical_bottom,physical_bottom_source:gpuConfig.physical_bottom_source};
+}
+function resetGpuStock(){
+ if(gpuStock){scene.remove(gpuStock.object);gpuStock.dispose();}
+ gpuStock=null;gpuStockGeneration=-1;gpuStockError=null;gpuConfig=null;
+}
+function initializeGpuStock(){
+ if(gpuStock)return true;
+ if(gpuStockError||!stockConfig||!motion?.moves.length)return false;
+ try{
+  const explicit=smartModeEnabled()?numericValue($('smartStockBottom').value,'Fundo do bruto',{required:false,fallback:null}):null;
+  gpuConfig=visualStockConfig(stockConfig,bounds().minimum[2],explicit);
+  gpuStock=createGpuStock(renderer,gpuConfig,motion.moves);gpuStockGeneration=stockGeneration;
+  gpuStock.object.visible=false;scene.add(gpuStock.object);gpuStock.seek(stockWanted);
+  return true;
+ }catch(error){if(gpuStock){scene.remove(gpuStock.object);gpuStock.dispose();}gpuStock=null;gpuConfig=null;gpuStockError=error.message||String(error);return false;}
+}
+function updateGpuStock(force=false){
+ if(!gpuStock||(!force&&mode!=='stock'))return;
+ try{const state=gpuStock.state();if(!state.available)throw Error(state.error||'Contexto GPU indisponível.');if(state.target!==stockWanted)gpuStock.seek(stockWanted);}
+ catch(error){
+  const message=error.message||String(error);resetGpuStock();gpuStockError=message;
+  // Retain the verified CPU path when graphics support or the context fails.
+  solidPrefetch={status:'idle',target:null,progress:0};prepareSolidBackground();
+ }
+}
+// Navigation keeps a persistent worker and bounded geometry caches. Only a
+// new stock generation invalidates geometry; playback never frees that work.
+function solidKey(target){return normalizeSolidTarget(motion?.moves||[],target);}
+function solidFinalKey(){return solidKey(motion?.moves.length||0);}
+function solidCacheState(){return {...solidWorkerStats,worker_hits:solidWorkerStats.hits,
+ hits:solidWorkerStats.hits+solidMainHits,main_hits:solidMainHits,main_entries:solidCache.size,main_bytes:solidCacheBytes,
+ main_budget_bytes:SOLID_CACHE_BYTES,main_max_entries:SOLID_CACHE_ENTRIES,keys:[...solidCache.keys()],final_key:solidFinalKey()};}
 function cancelSolid(){
- clearTimeout(solidTimer);solidTimer=null;solidWorker?.terminate();solidWorker=null;solidBusy=false;
+ clearTimeout(solidTimer);solidTimer=null;solidDisplayWanted=null;
  showStockSurface();
 }
-function scheduleSolid(){
- clearTimeout(solidTimer);
- if(busy||mode!=='stock'||playing||!stockReady||stockApplied!==stockWanted||solidBusy||solidFailedIndex===stockWanted)return;
- if(solidMesh&&solidGeneration===stockGeneration&&solidIndex===stockWanted){showStockSurface();return;}
- solidTimer=setTimeout(()=>{
-  if(busy||playing||!stockReady||stockApplied!==stockWanted||mode!=='stock')return;
-  solidBusy=true;$('surfaceStatus').textContent='Reconstruindo superfície…';
-  if(!solidWorker){
-   solidWorker=new Worker('/solid_worker.js',{type:'module'});
-   solidWorker.onmessage=({data:s})=>{
-    if(s.generation!==stockGeneration)return;
-    if(s.type==='progress'){if(s.target===stockWanted&&!playing)$('surfaceStatus').textContent=`Reconstruindo superfície · ${Math.round(s.progress*100)}%`;return;}
-    solidBusy=false;
-    if(s.target!==stockWanted||playing){scheduleSolid();return;}
-    if(s.type==='error'){solidFailedIndex=s.target;$('surfaceStatus').textContent='Prévia em grade · '+s.error;return;}
-    if(solidMesh){scene.remove(solidMesh);solidMesh.geometry.dispose();solidMesh.material.dispose();}
-    const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(s.positions,3));geometry.setAttribute('normal',new THREE.BufferAttribute(s.normals,3));geometry.setIndex(new THREE.BufferAttribute(s.indices,1));geometry.computeBoundingSphere();
-    solidMesh=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({color:0xc9b388,roughness:.85,side:THREE.DoubleSide}));scene.add(solidMesh);
-    solidIndex=s.target;solidGeneration=s.generation;showStockSurface();
-   };
-   solidWorker.onerror=()=>{solidBusy=false;solidFailedIndex=stockWanted;$('surfaceStatus').textContent='Prévia em grade · não foi possível reconstruir a superfície';};
+function resetSolid(){
+ resetGpuStock();
+ clearTimeout(solidTimer);solidTimer=null;solidWorker?.terminate();solidWorker=null;solidWorkerReady=false;solidWorkerFailed=false;
+ solidBusy=false;solidActive=null;solidDisplayWanted=null;solidFailedIndex=null;solidFailures.clear();
+ if(solidMesh){scene.remove(solidMesh);solidMesh.material.dispose();solidMesh=null;}
+ for(const entry of solidCache.values())entry.geometry.dispose();
+ solidCache.clear();solidCacheBytes=0;solidMainHits=0;solidIndex=-1;solidGeneration=-1;
+ solidWorkerStats={builds:0,hits:0,entries:0,bytes:0,budget_bytes:64*1024*1024,max_entries:8};
+ solidPrefetch={status:'idle',target:null,progress:0};
+}
+function trimSolidCache(reserved=null){
+ const pinned=solidFinalKey(),active=solidGeneration===stockGeneration?solidKey(solidIndex):null;
+ while(solidCache.size>SOLID_CACHE_ENTRIES||solidCacheBytes>SOLID_CACHE_BYTES){
+  const keys=[...solidCache.keys()];
+  // Reserve the incoming/displayed geometry, so insertion cannot immediately
+  // evict itself and trigger an endless cache-hit/request loop. Prefer the
+  // final and active meshes, but respect the hard byte bound when two large
+  // meshes do not fit together. The worker still retains the final mesh.
+  const removable=keys.find(key=>key!==reserved&&key!==pinned&&key!==active)
+   ??keys.find(key=>key!==reserved&&key!==active)
+   ??keys.find(key=>key!==reserved);
+  if(removable===undefined)break;
+  const entry=solidCache.get(removable);solidCache.delete(removable);solidCacheBytes-=entry.bytes;
+  if(solidMesh?.geometry===entry.geometry){scene.remove(solidMesh);solidMesh.material.dispose();solidMesh=null;solidIndex=-1;solidGeneration=-1;}
+  entry.geometry.dispose();
+ }
+}
+function cacheSolidGeometry(result){
+ const key=result.cache_key??solidKey(result.target),bytes=result.positions.byteLength+result.normals.byteLength+result.indices.byteLength;
+ if(bytes>SOLID_CACHE_BYTES)throw Error('Superfície detalhada excede o limite de memória da prévia.');
+ const old=solidCache.get(key);
+ if(old){solidCache.delete(key);solidCache.set(key,old);return key;}
+ const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(result.positions,3));geometry.setAttribute('normal',new THREE.BufferAttribute(result.normals,3));geometry.setIndex(new THREE.BufferAttribute(result.indices,1));geometry.computeBoundingSphere();
+ solidCache.set(key,{geometry,bytes,volume:result.volume});solidCacheBytes+=bytes;trimSolidCache(key);return key;
+}
+function useCachedSolid(target){
+ const key=solidKey(target),entry=solidCache.get(key);if(!entry)return false;
+ if(solidGeneration!==stockGeneration||solidIndex!==target)solidMainHits++;
+ solidCache.delete(key);solidCache.set(key,entry);
+ if(!solidMesh){solidMesh=new THREE.Mesh(entry.geometry,new THREE.MeshStandardMaterial({color:0xeadfc8,roughness:.85,side:THREE.DoubleSide}));scene.add(solidMesh);}
+ else solidMesh.geometry=entry.geometry;
+ solidMesh.userData.volume=entry.volume;solidMesh.userData.cache_key=key;
+ solidIndex=target;solidGeneration=stockGeneration;trimSolidCache(key);showStockSurface();return true;
+}
+function ensureSolidWorker(){
+ if(solidWorker||solidWorkerFailed||!stockConfig)return;
+ const owner=new Worker('/solid_worker.js',{type:'module'});solidWorker=owner;
+ owner.onmessage=({data:s})=>{
+  if(owner!==solidWorker||s.generation!==stockGeneration)return;
+  if(s.stats)solidWorkerStats={...solidWorkerStats,...s.stats};
+  if(s.type==='ready'){solidWorkerReady=true;dispatchSolid();return;}
+  if(s.type==='progress'){
+   if(s.purpose==='prefetch'){solidPrefetch.status='running';solidPrefetch.progress=Math.max(0,Math.min(1,s.progress));}
+   showStockSurface();return;
   }
-  solidWorker.postMessage({generation:stockGeneration,target:stockWanted,config:stockConfig,moves:motion?.moves||[]});
+  if(!['solid','error'].includes(s.type))return;
+  if(solidActive&&s.request_id!==solidActive.request_id)return;
+  solidBusy=false;solidActive=null;
+  const key=s.cache_key??solidKey(s.target);
+  if(s.type==='error'){
+   solidFailures.set(key,s.error||'Não foi possível reconstruir a superfície');solidFailedIndex=s.target;
+   while(solidFailures.size>8)solidFailures.delete(solidFailures.keys().next().value);
+   if(key===solidFinalKey())solidPrefetch={status:'error',target:motion?.moves.length||0,progress:0,error:s.error};
+  }else{
+   try{
+    cacheSolidGeometry(s);solidFailures.delete(key);
+    if(key===solidFinalKey())solidPrefetch={status:'ready',target:motion?.moves.length||0,progress:1};
+    // Cache a completed background or old-cursor result, but display it only
+    // when its exact removal state matches the current requested position.
+    if(!playing&&mode==='stock'&&stockReady&&stockApplied===stockWanted&&solidKey(stockWanted)===key)useCachedSolid(stockWanted);
+   }catch(error){solidFailures.set(key,error.message);solidFailedIndex=s.target;if(key===solidFinalKey())solidPrefetch={status:'error',target:motion?.moves.length||0,progress:0,error:error.message};}
+  }
+  showStockSurface();dispatchSolid();scheduleSolid();
+ };
+ owner.onerror=()=>{
+  if(owner!==solidWorker)return;
+  const failed=solidActive;solidBusy=false;solidActive=null;solidWorkerReady=false;solidWorkerFailed=true;
+  owner.terminate();solidWorker=null;
+  if(failed){solidFailures.set(solidKey(failed.target),'Não foi possível reconstruir a superfície');if(failed.purpose==='prefetch')solidPrefetch={status:'error',target:motion?.moves.length||0,progress:0,error:'Não foi possível reconstruir a superfície'};}
+  if(['queued','running'].includes(solidPrefetch.status))solidPrefetch={status:'error',target:motion?.moves.length||0,progress:0,error:'Não foi possível iniciar a reconstrução da superfície'};
+  solidDisplayWanted=null;showStockSurface();
+ };
+ owner.postMessage({type:'init',generation:stockGeneration,config:stockConfig,moves:motion?.moves||[]});
+}
+function dispatchSolid(){
+ if(solidBusy||solidWorkerFailed||!stockConfig)return;
+ ensureSolidWorker();if(!solidWorkerReady)return;
+ let target=null,purpose='display';
+ if(solidDisplayWanted!==null){
+  const requested=solidDisplayWanted;solidDisplayWanted=null;
+  if(!busy&&!playing&&mode==='stock'&&stockReady&&stockApplied===stockWanted&&requested===stockWanted&&!solidFailures.has(solidKey(requested))&&!useCachedSolid(requested))target=requested;
+ }
+ if(target===null&&solidPrefetch.status==='queued'){
+  target=solidPrefetch.target;purpose='prefetch';
+  if(solidCache.has(solidKey(target))){solidPrefetch={status:'ready',target,progress:1};showStockSurface();return;}
+  solidPrefetch.status='running';
+ }
+ if(target===null)return;
+ solidActive={type:'build',generation:stockGeneration,target,purpose,request_id:++solidRequestId};
+ solidBusy=true;solidWorker.postMessage(solidActive);showStockSurface();
+}
+function prepareSolidBackground(){
+ if(!stockConfig||!motion?.moves.length)return;
+ if(initializeGpuStock()){
+  try{
+   if(gpuStock.prepareFinal)gpuStock.prepareFinal();
+   else{gpuStock.seek(motion.moves.length);gpuStock.seek(stockWanted);}
+   const cached=gpuStock.state().final_ready!==false;
+   solidPrefetch={status:cached?'ready':'skipped',target:motion.moves.length,progress:cached?1:0,backend:'gpu',...(!cached?{error:'Cache final excede o orçamento de memória; a GPU continua calculando cada posição sob demanda.'}:{})};showStockSurface();return;
+  }catch(error){const message=error.message||String(error);resetGpuStock();gpuStockError=message;}
+ }
+ solidPrefetch={status:'queued',target:motion.moves.length,progress:0};ensureSolidWorker();dispatchSolid();showStockSurface();
+}
+function scheduleSolid(){
+ clearTimeout(solidTimer);solidTimer=null;
+ if(gpuStock){showStockSurface();return;}
+ if(busy||mode!=='stock'||playing||!stockReady||stockApplied!==stockWanted)return;
+ if(useCachedSolid(stockWanted)){solidDisplayWanted=null;return;}
+ if(solidFailures.has(solidKey(stockWanted))){showStockSurface();return;}
+ solidTimer=setTimeout(()=>{
+  solidTimer=null;
+  if(busy||playing||!stockReady||stockApplied!==stockWanted||mode!=='stock')return;
+  solidDisplayWanted=stockWanted;dispatchSolid();
  },250);
 }
 function clearGroup(group){while(group.children.length){const item=group.children[0];group.remove(item);item.traverse(o=>{o.geometry?.dispose();o.material?.map?.dispose();if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());else o.material?.dispose();});}}
@@ -156,6 +314,14 @@ function clearGroup(group){while(group.children.length){const item=group.childre
 THREE.Object3D.DEFAULT_UP.set(0,0,1);
 const scene=new THREE.Scene();scene.background=new THREE.Color('#e8eef3');
 const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.domElement.addEventListener('webglcontextlost',()=>{
+ stop();resetGpuStock();gpuStockError='Contexto gráfico perdido. Aguardando recuperação da GPU.';
+ solidPrefetch={status:'error',target:motion?.moves.length||null,progress:0,error:gpuStockError};
+ $('surfaceStatus').textContent=gpuStockError;
+});
+renderer.domElement.addEventListener('webglcontextrestored',()=>{
+ if(data&&tool){resetStock(false);updateCursor();requestStock();}
+});
 $('canvasHost').append(renderer.domElement);
 const camera=new THREE.OrthographicCamera(-60,60,60,-60,.1,10000);camera.position.set(130,-130,120);
 let controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.dampingFactor=.12;
@@ -237,8 +403,9 @@ function displayToolSelect(){
  for(const t of tools)$('toolSelect').add(new Option(t.name,t.id));$('toolSelect').value=tool?'@project':tools[0]?.id;
  $('toolInfo').textContent=tool?`Ø ${fmt(tool.diameter_mm,3)} mm · corte ${fmt(tool.cutting_length_mm)} mm · topo reto`:'';
 }
-const fieldMap={stockTop:'stock_top_mm',stepdown:'stepdown_mm',angle:'raster_angle_deg',sampling:'sampling_mm',radial:'radial_allowance_mm',axial:'axial_allowance_mm',rampAngle:'entry_angle_deg',clearance:'clearance_mm'};
+const fieldMap={stockTop:'stock_top_mm',stepdown:'stepdown_mm',angle:'raster_angle_deg',sampling:'sampling_mm',radial:'radial_allowance_mm',axial:'axial_allowance_mm',rampAngle:'entry_angle_deg',clearance:'clearance_mm',surfaceError:'surface_error_mm',pathTolerance:'path_tolerance_mm'};
 function smartModeEnabled(){return $('machiningMode').value==='smart';}
+function smartPolicyForUi(){return smartPolicyText(currentSmartPlan()??{part_released:$('smartPartReleased').checked});}
 function roughBottom(){return smartModeEnabled()&&data?bounds().minimum[2]:number('stockTop')-number('bottom');}
 function cutoutBottom(){return smartModeEnabled()&&data?numericValue($('smartStockBottom').value,'Fundo do bruto',{required:false,fallback:bounds().minimum[2]})-number('smartBreakthrough'):number('stockTop')-number('cutoutDepth');}
 function drillBottom(){return number('stockTop')-number('drillDepth');}
@@ -267,12 +434,18 @@ function automaticRegionsViewState(){
 }
 function renderSmartPlan(){
  const smart=smartModeEnabled(),report=currentSmartPlan();
+ const released=$('smartPartReleased').checked;
  $('smartModePanel').hidden=!smart;
+ $('smartModeDescription').textContent=released?'Peça já recortada: detecta os rebaixos, bolsões e aberturas internas. O exterior não é recortado; Keep Out protege a fixação.':'O Rough calcula formas 3D, furos, bolsões e rebaixos, inclusive abertos à borda. O Cutout faz o contorno externo completo em camadas; confira a viabilidade no plano. Regiões manuais são opcionais. Se ativado, Drill é executado primeiro.';
+ $('smartReleaseWarning').textContent=released?'A peça já está solta. Informe a área e a altura da fixação em Girar → Preparar fixação; o plano mantém a orientação e o zero atuais.':'A peça será solta no final: use uma fixação que a mantenha estável durante o último corte.';
+ $('smartSkinField').hidden=released;$('smartSkin').disabled=released;
+ $('smartExtraLabel').textContent=released?'Corte extra dos internos':'Corte extra para soltar';
+ $('smartStockHint').textContent=released?'Fundo vazio assume o fundo do STL. O corte extra vale somente para recortes internos passantes selecionados; não aprofunda o Rough. A peça já solta não usa pele de retenção.':'Fundo vazio assume a espessura do STL. Se a madeira for mais espessa, informe o Z real do fundo; o corte extra é somado abaixo desse fundo. A pele limita o corte exterior pelo Rough nas camadas finais; furos e bolsões internos continuam até o fundo configurado. O Cutout mantém a profundidade final.';
  $('smartPlanSummary').dataset.state='';
  $('smartPlanSummary').textContent=smart&&report?.enabled?smartPlanText(report,value=>fmt(value,3)):'Confira o plano antes de calcular.';
  $('inspectSmartPlan').disabled=!data||smartPlanPending;
  if(smart){
-  const policy=smartPolicyText(report);$('orderHint').textContent=policy.order;$('cutoutReuseHint').textContent=policy.reuse;
+  const policy=smartPolicyForUi();$('orderHint').textContent=policy.order;$('cutoutReuseHint').textContent=policy.reuse;
   $('regionNote').textContent=policy.regions+' Nenhuma região desenhada é necessária. Keep In / Keep Out limitam a área automática. Confira o plano para ver o envelope dos centros da fresa.';
  }
  renderAutomaticRegions();
@@ -280,11 +453,11 @@ function renderSmartPlan(){
 function syncSmartOperationList(){
  const smart=smartModeEnabled();
  if(smart){
-  const effective=operationListFromOptions(effectiveMachiningOptions({...operationOptionsFromList(operationList.getState()),machining_mode:'smart'}));
-  operationList.setState(effective);$('roughEnabled').checked=true;$('cutoutEnabled').checked=true;$('operationOrder').value='roughing_then_cutout';
+  const effective=operationListFromOptions(effectiveMachiningOptions({...operationOptionsFromList(operationList.getState()),machining_mode:'smart',smart_part_released:$('smartPartReleased').checked}));
+  operationList.setState(effective);$('roughEnabled').checked=effective.enabled.roughing;$('cutoutEnabled').checked=true;$('operationOrder').value='roughing_then_cutout';
  }
  operationList.setLocked(smart);
- $('operationListHelp').textContent=smart?'Ordem automática: Drill (se ativo) → Rough → Cutout externo. Use Manual para reordenar ou desligar o Rough/Cutout.':'Marque as operações e arraste ⋮⋮ para mudar a ordem. Clique no nome para editar.';
+ $('operationListHelp').textContent=smart?($('smartPartReleased').checked?'Peça já solta: Rough interno → Cutout apenas nos internos escolhidos pelo plano. Sem recorte interno selecionado, o Cutout não tem movimentos.':'Ordem automática: Drill (se ativo) → Rough → Cutout externo. Use Manual para reordenar ou desligar o Rough/Cutout.'):'Marque as operações e arraste ⋮⋮ para mudar a ordem. Clique no nome para editar.';
  renderSmartPlan();
 }
 async function inspectSmartPlan(){
@@ -300,44 +473,80 @@ async function inspectSmartPlan(){
   throw error;
  }finally{smartPlanPending=false;$('inspectSmartPlan').disabled=!data;}
 }
+function syncSmartDepthFields(changed=null){
+ if(!smartModeEnabled()||!data){$('cutoutDepth').dataset.depthError='';return;}
+ try{
+  const top=numericValue($('stockTop').value,'Topo do bruto');
+  const raw=$('smartStockBottom').value;
+  const bottom=raw.trim()===''?null:numericValue(raw,'Fundo do bruto');
+  let extra=numericValue($('smartBreakthrough').value,'Ultrapassagem do bruto',{min:0});
+  if(changed==='cutoutDepth'){
+   extra=breakthroughForCutDepth(numericValue($('cutoutDepth').value,'Profundidade do Cutout',{min:Number.MIN_VALUE}),top,bounds().minimum[2],bottom);
+   $('smartBreakthrough').value=extra;
+  }
+  const depths=smartReleaseDepths(top,bounds().minimum[2],bottom,extra);
+  $('cutoutDepth').value=Number(depths.cutout_depth_mm.toFixed(9));
+  $('bottom').value=Number(depths.rough_depth_mm.toFixed(9));
+  $('cutoutDepth').dataset.depthError='';
+ }catch(error){$('cutoutDepth').dataset.depthError=error.message;}
+}
 function updateHints(){
  const smart=smartModeEnabled();
+ $('roughStrategyHint').textContent=$('strategy').value==='hybrid'?'3D eficiente: reconhece pisos, agrupa pequenas variações em Z e elimina passadas já removidas com comprovação geométrica. Mantém o Stepdown e os avanços configurados.':$('strategy').value==='planar'?'Camadas simples: alturas constantes. Os pisos podem ficar com sobra de até um Stepdown; superfícies inclinadas ficam em degraus.':'3D detalhado: adapta o Z à superfície do STL, com mais segmentos e movimentos.';
+ $('roughQuality').hidden=$('strategy').value==='conformal';
+ $('surfaceErrorField').hidden=$('strategy').value!=='hybrid';
+ $('roughQualityHint').textContent=$('strategy').value==='planar'?'Os cortes mantêm Z constante e deixam degraus nas superfícies inclinadas. O desvio reduz pequenos segmentos dos contornos sem sair da área permitida. Entradas mais rápidas mantêm o Stepdown; o mergulho exige corte pelo centro confirmado.':'Reconhece pisos planos e agrupa pequenos ajustes de altura. A sobra em Z limita a aproximação adicional sobre o contato calculado da fresa; soma-se ao sobremetal axial. Cantos menores que a fresa continuam limitados pela ferramenta. O desvio simplifica contornos dentro das áreas permitidas.';
  $('roughEntryHint').hidden=!smart;$('reviewCenterCutting').hidden=!smart;$('roughEntryHint').textContent=smart?smartEntryHint($('drillCenterCutting').checked):'';
- $('orderHint').textContent=smart?smartPolicyText(currentSmartPlan()).order:$('operationOrder').value==='cutout_then_roughing'?'Cutout primeiro: mantenha a peça presa após o recorte, para executar o desbaste.':'A simulação e o NC seguem a ordem selecionada.';
+ $('orderHint').textContent=smart?smartPolicyForUi().order:$('operationOrder').value==='cutout_then_roughing'?'Cutout primeiro: mantenha a peça presa após o recorte, para executar o desbaste.':'A simulação e o NC seguem a ordem selecionada.';
  try{$('cutHint').textContent=$('roughEnabled').checked?`Z final: ${fmt(roughBottom(),3)} mm · Stepover: ${fmt(number('stepover')/100*tool.diameter_mm,3)} mm entre passadas.`:'Desbaste desativado.';}catch{$('cutHint').textContent='Complete os parâmetros do desbaste.';}
  try{$('cutoutHint').textContent=$('cutoutEnabled').checked?`Z final: ${fmt(cutoutBottom(),3)} mm · ${smart?'descida limitada também pelo Stepdown do Rough.':Math.ceil(number('cutoutDepth')/number('cutoutStepdown'))+' camadas por contorno.'}`:'Cutout desativado.';}catch{$('cutoutHint').textContent='Complete os parâmetros do cutout.';}
+ $('smartReleaseSummary').textContent='';
+ if(smart)try{
+  const top=number('stockTop'),raw=$('smartStockBottom').value;
+  const depth=smartReleaseDepths(top,bounds().minimum[2],raw.trim()===''?null:numericValue(raw,'Fundo do bruto'),number('smartBreakthrough'));
+  const summary=`Rough: ${fmt(depth.rough_depth_mm,3)} mm · ${$('smartPartReleased').checked?'Recortes internos, se selecionados':'Corte final'}: ${fmt(depth.cutout_depth_mm,3)} mm (Z ${fmt(depth.cutout_bottom_mm,3)}). O corte extra vale só para o Cutout.`;
+  $('smartReleaseSummary').textContent=$('cutoutDepth').dataset.depthError||summary;
+  $('cutoutHint').textContent=$('cutoutDepth').dataset.depthError||summary;
+ }catch(error){$('smartReleaseSummary').textContent=error.message;}
+ $('roughReleaseHint').hidden=!smart||$('smartPartReleased').checked;
  try{$('drillHint').textContent=$('drillEnabled').checked?`Z limite: ${fmt(drillBottom(),3)} mm · fresa Ø ${fmt(tool.diameter_mm,3)} mm · corte ${fmt(tool.cutting_length_mm)} mm.`:'Drill desativado. Você pode conferir os furos antes de ativar.';}catch{$('drillHint').textContent='Complete os parâmetros do Drill.';}
-  $('cutoutContourHint').textContent=smart?'Inteligente: compara bolsões e recortes internos passantes. Miolos vantajosos são recortados antes do exterior; o Rough usina os demais detalhes. Confira a seleção no plano.':$('cutoutContours').value==='external'?'Somente o contorno externo: furos internos ficam fora do Cutout. Para recortá-los, escolha Internos + externo e uma fresa que caiba.':'Recorta os internos antes do externo. Se a fresa não couber em um interno, ajuste a ferramenta ou selecione somente o externo.';
+  $('drillReturnHint').textContent=$('drillRetractMode').value==='chip_break'?'Retração curta: a fresa sobe apenas o valor informado entre mergulhos; não sai completamente para retirar cavacos. Entre furos, sobe à altura segura.':'Retração completa: sai do furo entre mergulhos para retirar cavacos. O retorno rápido encurta a descida pela parte já furada.';
+ $('cutoutContourHint').textContent=smart?($('smartPartReleased').checked?'Peça já solta: seleciona somente internos passantes vantajosos e livres da fixação. O exterior fica fora do Cutout. Sem interno selecionado, não há movimentos de Cutout.':'Inteligente: compara bolsões e recortes internos passantes. Miolos vantajosos são recortados antes do exterior; o Rough usina os demais detalhes. Confira a seleção no plano.'):$('cutoutContours').value==='internal'?'Recorta somente os contornos internos passantes, mantendo o exterior fora do Cutout. Para trabalhar apenas o interior de uma peça já recortada, desative Rough e Drill na lista de operações.':$('cutoutContours').value==='external'?'Somente o contorno externo: furos internos ficam fora do Cutout. Para recortá-los, escolha Somente internos ou Internos + externo e uma fresa que caiba.':'Recorta os internos antes do externo. Se a fresa não couber em um interno, ajuste a ferramenta ou selecione somente o externo.';
  const canReuse=priorRoughingAvailable($('roughEnabled').checked,$('cutoutEnabled').checked,$('operationOrder').value,operationList.getState().order,$('drillEnabled').checked);
- $('cutoutReuseHint').textContent=smart?smartPolicyText(currentSmartPlan()).reuse:!canReuse?'Disponível quando Rough é a operação ativa imediatamente anterior ao Cutout. Na configuração atual, o recorte usa suas próprias camadas.':$('cutoutUsePriorRoughing').checked?'O Cutout aproveita áreas já removidas pelo Rough. Trechos ainda com material mantêm as camadas de corte.':'O Cutout usa suas próprias camadas, mesmo após o Rough.';
+ $('cutoutReuseHint').textContent=smart?smartPolicyForUi().reuse:!canReuse?'Disponível quando Rough é a operação ativa imediatamente anterior ao Cutout. Na configuração atual, o recorte usa suas próprias camadas.':$('cutoutUsePriorRoughing').checked?'O Cutout aproveita áreas já removidas pelo Rough. Trechos ainda com material mantêm as camadas de corte.':'O Cutout usa suas próprias camadas, mesmo após o Rough.';
+ $('cutoutRegionsHint').textContent=smart&&$('smartPartReleased').checked?'Peça já solta: os recortes internos também respeitam os limites Keep In e a fixação Keep Out. Um contorno bloqueado fica no Rough.':'Keep In e Keep Out valem só para o Rough. O Cutout segue os contornos selecionados da peça.';
  renderSmartPlan();
 }
 function readOperations({strict=true}={}){
- const values={};for(const id of ['machiningMode','smartStockBottom','smartBreakthrough','smartSkin','operationOrder','roughingOrder','spindleRpm','roughEnabled','cutoutEnabled','drillEnabled','drillDepth','drillPeck','drillTolerance','drillFeed','drillAllowHelix','drillCenterCutting','drillCompensateFacets','cutoutDepth','cutoutStepdown','cutoutDirection','cutoutContours','cutoutUsePriorRoughing','roughFeed','cutoutFeed','plungeFeed','rapidFeed'])values[id]=$(id).type==='checkbox'?$(id).checked:$(id).value;
+ if(strict&&smartModeEnabled()&&$('cutoutDepth').dataset.depthError)throw Error($('cutoutDepth').dataset.depthError);
+ const values={};for(const id of ['machiningMode','smartPartReleased','smartStockBottom','smartBreakthrough','smartSkin','operationOrder','roughingOrder','spindleRpm','roughEnabled','cutoutEnabled','drillEnabled','drillDepth','drillPeck','drillRetractMode','drillRetract','drillRapidReentry','drillReentryGap','drillTolerance','drillFeed','drillAllowHelix','drillCenterCutting','drillCompensateFacets','cutoutDepth','cutoutStepdown','cutoutSmoothing','cutoutDirection','cutoutContours','cutoutUsePriorRoughing','roughFeed','cutoutFeed','plungeFeed','rapidFeed'])values[id]=$(id).type==='checkbox'?$(id).checked:$(id).value;
+ for(const id of TIMING_SCALAR_FIELDS)values[id]=$(id).value;
+ for(const [key,ids]of Object.entries(TIMING_AXIS_FIELDS))values[key]=ids.map(id=>$(id).value);
  values.operationSequence=operationList.getState().order;
  return readOperationValues(values,operations,tool,strict?number('stockTop'):numericValue($('stockTop').value,'Topo do bruto',{required:false,fallback:settings.stock_top_mm??0}),{strict});
 }
-function presetState(detail=false){return {selected_id:presetStore.selected_id,items:presetStore.presets.map(p=>detail?p:{id:p.id,name:p.name}),last_used_available:!!presetStore.last_used,saving:presetSaving,error:presetError||null};}
+function presetState(detail=false){return {selected_id:presetStore.selected_id,items:presetStore.presets.map(p=>detail?p:{id:p.id,name:p.name}),last_used_available:!!presetStore.last_used,saving:presetSaving||presetTimer!==null,error:presetError||null};}
 function renderPresets(){
  const select=$('presetSelect');select.replaceChildren(new Option('Últimos ajustes · automático',''));
  for(const p of presetStore.presets)select.add(new Option(p.name,p.id));select.value=presetStore.selected_id||'';
  $('presetTools').hidden=!presetStore.selected_id;
  $('presetStatus').dataset.error=String(!!presetError);
- $('presetStatus').textContent=presetError|| (presetSaving?'Salvando ajustes…':presetStore.last_used?'Ajustes salvos · restaurados ao reabrir.':'Avanços e ajustes serão lembrados automaticamente.');
+ $('presetStatus').textContent=presetError|| (presetSaving||presetTimer!==null?'Salvando ajustes…':presetStore.selected_id?'Edições salvas automaticamente neste preset · inclui aceleração XYZ.':presetStore.last_used?'Ajustes salvos · restaurados ao reabrir.':'Avanços e ajustes serão lembrados automaticamente.');
 }
 function currentMachiningProfile(){return machiningProfile(tool,readSettings({strict:false}),readOperations({strict:false}));}
 function storePreset(record){
- clearTimeout(presetTimer);presetTimer=null;presetSaving=true;presetError='';renderPresets();
+ clearTimeout(presetTimer);presetTimer=null;presetRememberSelected=false;presetSaving=true;presetError='';renderPresets();
  const operation=presetQueue.catch(()=>{}).then(()=>api('/api/presets',record));presetQueue=operation;
  return operation.then(saved=>{presetStore=saved;presetError='';return saved;}).catch(error=>{presetError='Ajustes não salvos: '+error.message;throw error;}).finally(()=>{presetSaving=false;renderPresets();});
 }
-async function rememberMachining(){
+async function rememberMachining({updateSelected=presetTimer!==null&&presetRememberSelected}={}){
  if(!tool)return;clearTimeout(presetTimer);presetTimer=null;
- return storePreset({action:'remember',profile:currentMachiningProfile(),selected_id:presetStore.selected_id});
+ return storePreset(rememberProfileRequest(currentMachiningProfile(),presetStore,{updateSelected}));
 }
-function scheduleRemember(){
+function scheduleRemember({updateSelected=true}={}){
  if(!token||!tool)return;clearTimeout(presetTimer);
- presetTimer=setTimeout(()=>rememberMachining().catch(error=>{presetError='Ajustes não salvos: '+error.message;renderPresets();}),400);
+ presetRememberSelected=updateSelected;
+ presetTimer=setTimeout(()=>rememberMachining({updateSelected}).catch(error=>{presetError='Ajustes não salvos: '+error.message;renderPresets();}),400);renderPresets();
 }
 function applyMachiningProfile(profile){
  commandIdle();const stock=data?readStockSettings():null;
@@ -347,53 +556,104 @@ function applyMachiningProfile(profile){
  if(data){makeTool();dirty('Preset aplicado. Confira a ferramenta e recalcule os percursos.');}
 }
 async function applyPreset(id){
+ commandIdle();if(presetTimer!==null)await rememberMachining();
  const p=presetStore.presets.find(p=>p.id===id);if(!p)throw Error('Escolha um preset salvo.');
- applyMachiningProfile(p.profile);presetStore.selected_id=id;await rememberMachining().catch(()=>{});return presetState(true);
+ applyMachiningProfile(p.profile);presetStore.selected_id=id;await rememberMachining({updateSelected:false});return presetState(true);
 }
 async function savePreset(name,id=null){
- commandIdle();await storePreset({action:'save',name,profile:currentMachiningProfile(),...(id?{id}:{})});return presetState(true);
+ commandIdle();
+ if(!id&&presetTimer!==null)await rememberMachining();
+ await storePreset({action:'save',name,profile:currentMachiningProfile(),...(id?{id}:{})});return presetState(true);
 }
-$('presetSelect').onchange=()=>{const id=$('presetSelect').value;if(id)applyPreset(id).catch(e=>toast(e.message,true));else{presetStore.selected_id=null;rememberMachining().catch(e=>toast(e.message,true));}};
+$('presetSelect').onchange=async()=>{try{const id=$('presetSelect').value;if(id)await applyPreset(id);else{if(presetTimer!==null)await rememberMachining();presetStore.selected_id=null;await rememberMachining({updateSelected:false});}}catch(e){toast(e.message,true);}};
 $('savePreset').onclick=()=>{$('presetName').value='';$('presetDialog').showModal();$('presetName').focus();};
 $('presetForm').onsubmit=async e=>{e.preventDefault();try{await savePreset($('presetName').value);$('presetDialog').close();toast('Preset salvo.');}catch(error){$('presetDialogError').textContent=error.message;}};
 $('updatePreset').onclick=()=>{const p=presetStore.presets.find(p=>p.id===presetStore.selected_id);if(p)savePreset(p.name,p.id).then(()=>toast('Preset atualizado.')).catch(e=>toast(e.message,true));};
 $('deletePreset').onclick=()=>storePreset({action:'delete',id:presetStore.selected_id}).catch(e=>toast(e.message,true));
+function grblTargetValues(){
+ return grblProfileValues({machine_max_rate_mm_min:['X','Y','Z'].map(axis=>$('machineMaxRate'+axis).value),machine_acceleration_mm_s2:['X','Y','Z'].map(axis=>$('machineAcceleration'+axis).value)});
+}
+const grblProfile=createGrblProfile({api,readProfile:grblTargetValues,onChange:renderGrblProfile});
+function grblState(){return grblProfile.state();}
+function renderGrblProfile(state=grblState()){
+ const select=$('grblPort');select.replaceChildren(new Option('Selecione a porta USB…',''));
+ for(const p of state.ports)select.add(new Option(p.port+(p.description?' · '+p.description:''),p.port));
+ if(state.connection.port&&!state.ports.some(p=>p.port===state.connection.port))select.add(new Option(state.connection.port,state.connection.port));
+ select.value=state.connection.port;$('grblBaudrate').value=String(state.connection.baudrate);
+ for(const id of ['grblPort','grblBaudrate','grblRefresh','grblRead'])$(id).disabled=state.busy;
+ $('grblRead').disabled=state.busy||!state.connection.port;$('grblApply').disabled=!state.can_apply;$('grblUseEstimate').disabled=state.busy||!state.values;
+ $('grblStatus').dataset.state=state.phase;$('grblStatus').textContent=state.message;
+ $('grblReadValues').hidden=!state.values;const rows=$('grblValuesBody');rows.replaceChildren();
+ for(const row of grblProfileRows(state.values)){
+  const tr=document.createElement('tr');for(const value of [row.axis,fmt(row.maximum,3),fmt(row.acceleration,3)]){const td=document.createElement('td');td.textContent=value;tr.append(td);}rows.append(tr);
+ }
+ $('grblApply').textContent=state.phase==='writing'?'Gravando…':'Gravar no GRBL';
+ $('grblBackup').hidden=!state.last_report?.backup_path;$('grblBackup').textContent=state.last_report?.backup_path?'Backup anterior salvo em '+state.last_report.backup_path:'';
+}
+function grblSelectedConnection(){return {port:$('grblPort').value,baudrate:Number($('grblBaudrate').value)};}
+async function grblPorts(){return grblProfile.refresh();}
+async function grblRead(connection){return grblProfile.read(connection??grblSelectedConnection());}
+async function grblApply(command={}){return grblProfile.apply({...grblSelectedConnection(),...command});}
+function grblUseEstimate(){
+ commandIdle();const actual=grblState().values;if(!actual)throw Error('Leia o perfil do GRBL primeiro.');
+ for(const [i,axis]of ['X','Y','Z'].entries()){$('machineMaxRate'+axis).value=actual.machine_max_rate_mm_min[i];$('machineAcceleration'+axis).value=actual.machine_acceleration_mm_s2[i];}
+ if(data)dirty('Perfil lido da máquina aplicado à estimativa. Recalcule os percursos.');else scheduleRemember();
+ toast('Velocidades e acelerações do GRBL copiadas para a estimativa.');return grblState();
+}
+for(const id of ['grblPort','grblBaudrate'])$(id).onchange=()=>{try{grblProfile.select(grblSelectedConnection());}catch(error){toast(error.message,true);}};
+$('grblRefresh').onclick=()=>grblPorts().catch(error=>toast(error.message,true));
+$('grblRead').onclick=()=>grblRead().catch(error=>toast(error.message,true));
+$('grblApply').onclick=()=>grblApply().then(result=>toast(result.message||grblState().message,!result.verified)).catch(error=>toast(error.message,true));
+$('grblUseEstimate').onclick=()=>{try{grblUseEstimate();}catch(error){toast(error.message,true);}};
+renderGrblProfile();
 function updateOperationControls(){
+ const timing=timingControlState($('timingModel').value);
+ $('rapidFeed').disabled=timing.rapidDisabled;$('machineTimingProfile').disabled=timing.profileDisabled;
+ $('machineTimingProfile').style.opacity=timing.profileDisabled?'.55':'1';
+ $('rapidEstimateHint').textContent=timing.rapidHint;$('timingEstimateHint').textContent=timing.estimateHint;
  const contourOption=[...($('cutoutContours').options||[])].find(option=>option.value==='external');
  if(contourOption)contourOption.textContent=smartModeEnabled()?'Automático · internos vantajosos + externo':'Soltar a peça · somente externo';
+ const internalOption=[...($('cutoutContours').options||[])].find(option=>option.value==='internal');
+ if(internalOption)internalOption.textContent=smartModeEnabled()&&$('smartPartReleased').checked?'Automático · somente internos':'Somente internos · peça já recortada';
  const smart=smartModeEnabled();
  $('domainMode').disabled=smart||!$('roughEnabled').checked;
  $('domainHint').textContent=smart?'O modo inteligente define as áreas de Rough automaticamente.':$('domainMode').value==='silhouette'?'Peça já recortada: limita o Rough à silhueta da peça. Desenhe Keep In para selecionar os detalhes e Keep Out para proteger a fixação.':'Bruto retangular: a área permitida define onde o Rough pode remover material.';
- for(const id of ['bottom','stepdown','stepover','roughFeed','roughingOrder','strategy','angle','sampling','radial','axial','cleanup'])$(id).disabled=!$('roughEnabled').checked;
- for(const id of ['cutoutDepth','cutoutStepdown','cutoutFeed','cutoutDirection','cutoutContours'])$(id).disabled=!$('cutoutEnabled').checked;
- for(const id of ['drillDepth','drillPeck','drillTolerance','drillFeed','drillAllowHelix','drillCenterCutting','drillCompensateFacets'])$(id).disabled=!$('drillEnabled').checked;
+ for(const id of ['bottom','stepdown','stepover','roughFeed','roughingOrder','strategy','angle','sampling','radial','axial','cleanup','surfaceError','pathTolerance','optimizeEntries'])$(id).disabled=!$('roughEnabled').checked;
+ for(const id of ['cutoutDepth','cutoutStepdown','cutoutSmoothing','cutoutFeed','cutoutDirection','cutoutContours'])$(id).disabled=!$('cutoutEnabled').checked;
+ for(const id of ['drillDepth','drillPeck','drillRetractMode','drillRetract','drillRapidReentry','drillReentryGap','drillTolerance','drillFeed','drillAllowHelix','drillCenterCutting','drillCompensateFacets'])$(id).disabled=!$('drillEnabled').checked;
  $('drillCenterCutting').disabled=!$('drillEnabled').checked&&!smart;
+ $('drillRetract').disabled=!$('drillEnabled').checked||$('drillRetractMode').value!=='chip_break';$('drillReentryGap').disabled=!$('drillEnabled').checked||!$('drillRapidReentry').checked;
  $('cutoutUsePriorRoughing').disabled=!priorRoughingAvailable($('roughEnabled').checked,$('cutoutEnabled').checked,$('operationOrder').value,operationList.getState().order,$('drillEnabled').checked);
- if(smart)for(const id of ['bottom','cutoutDepth','cutoutContours','cutoutUsePriorRoughing'])$(id).disabled=true;
+ if(smart)for(const id of ['bottom','cutoutContours','cutoutUsePriorRoughing'])$(id).disabled=true;
  for(const id of ['drawKeepout','drawBoundary','clearRegions','editWindows'])$(id).disabled=!$('roughEnabled').checked;
  regionPicker?.setDisabled(!$('roughEnabled').checked);
  if(!$('roughEnabled').checked&&drawMode)cancelDraw();
 }
 function fillFields(){
  operations={...operations,...cutoutPreferences(operations)};
- for(const [id,key]of Object.entries(fieldMap))$(id).value=settings[key]??0;
+ for(const [id,key]of Object.entries(fieldMap))$(id).value=settings[key]??({surfaceError:.15,pathTolerance:.02}[id]??0);
  $('bottom').value=settings.stock_top_mm-settings.bottom_mm;$('stepover').value=100*settings.stepover_mm/tool.diameter_mm;
  $('roughEnabled').checked=operations.roughing_enabled??true;$('cutoutEnabled').checked=operations.cutout_enabled??false;$('drillEnabled').checked=operations.drill_enabled??false;
  $('machiningMode').value=operations.machining_mode||'manual';
- $('smartStockBottom').value=operations.smart_stock_bottom_mm??'';$('smartBreakthrough').value=operations.smart_breakthrough_mm??0;$('smartSkin').value=operations.smart_skin_mm??'';
+ $('smartPartReleased').checked=operations.smart_part_released??false;$('smartStockBottom').value=operations.smart_stock_bottom_mm??'';$('smartBreakthrough').value=operations.smart_breakthrough_mm??0;$('smartSkin').value=operations.smart_skin_mm??'';
  const listState=operationListFromOptions(effectiveMachiningOptions(operations));operationList.setState(listState);syncSmartOperationList();
  $('operationOrder').value=operationOptionsFromList(listState).order;$('spindleRpm').value=operations.spindle_rpm??tool.spindle_rpm??'';
  $('roughingOrder').value=operations.roughing_order||'region_first';
- $('cutoutDepth').value=settings.stock_top_mm-(operations.cutout_bottom_mm??settings.bottom_mm);$('cutoutStepdown').value=operations.cutout_stepdown_mm??.635;
+ $('cutoutDepth').value=settings.stock_top_mm-(operations.cutout_bottom_mm??settings.bottom_mm);$('cutoutStepdown').value=operations.cutout_stepdown_mm??.635;$('cutoutSmoothing').value=operations.cutout_smoothing_mm??0;
+ syncSmartDepthFields();
  $('drillDepth').value=settings.stock_top_mm-(operations.drill_bottom_mm??settings.bottom_mm);$('drillPeck').value=operations.drill_peck_mm??1;$('drillTolerance').value=operations.drill_tolerance_mm??.03;
  $('drillFeed').value=operations.drill_feed_mm_min??tool.feed_mm_min??'';$('drillAllowHelix').checked=operations.drill_allow_helix??false;$('drillCenterCutting').checked=operations.drill_center_cutting??false;
  $('drillCompensateFacets').checked=operations.drill_compensate_facets??false;
+ $('drillRetractMode').value=operations.drill_retract_mode??'full';$('drillRetract').value=operations.drill_retract_mm??1;$('drillRapidReentry').checked=operations.drill_rapid_reentry??true;$('drillReentryGap').value=operations.drill_reentry_gap_mm??.25;
  $('drillInspection').replaceChildren();
- $('cutoutDirection').value=operations.cutout_direction||'climb';$('cutoutContours').value=smartModeEnabled()?'external':operations.cutout_contours;$('cutoutUsePriorRoughing').checked=smartModeEnabled()||operations.cutout_use_prior_roughing;
+ $('cutoutDirection').value=operations.cutout_direction||'climb';$('cutoutContours').value=smartModeEnabled()?($('smartPartReleased').checked?'internal':'external'):operations.cutout_contours;$('cutoutUsePriorRoughing').checked=smartModeEnabled()||operations.cutout_use_prior_roughing;
  $('roughFeed').value=operations.roughing_feed_mm_min??tool.feed_mm_min??'';$('cutoutFeed').value=operations.cutout_feed_mm_min??tool.feed_mm_min??'';
  $('plungeFeed').value=operations.plunge_mm_min??tool.plunge_mm_min??'';$('rapidFeed').value=operations.rapid_mm_min??3000;
+ const timing=timingFormValues(operations);
+ for(const id of TIMING_SCALAR_FIELDS)$(id).value=timing[id];
+ for(const [key,ids]of Object.entries(TIMING_AXIS_FIELDS))ids.forEach((id,i)=>{$(id).value=timing[key][i];});
+ $('strategy').value=settings.strategy;$('cleanup').checked=settings.cleanup_contours;$('optimizeEntries').checked=settings.optimize_entries??true;
  updateHints();updateOperationControls();
- $('strategy').value=settings.strategy;$('cleanup').checked=settings.cleanup_contours;
  $('domainMode').value=settings.domain_mode||'expanded';updateOperationControls();
  $('obstacleTop').value=settings.obstacle_top_mm??settings.stock_top_mm;
  $('units').value=placement.units;$('face').value='custom';$('xyOrigin').value=placement.xy_origin||'keep';$('zOrigin').value=placement.z_origin||'keep';
@@ -404,13 +664,13 @@ function fillFields(){
 }
 function readSettings({strict=true}={}){
  const rough=strict&&$('roughEnabled').checked,s={...settings};
- const roughOnly=['stepdown','angle','sampling','radial','axial'];
- const minima={stepdown:Number.MIN_VALUE,sampling:Number.MIN_VALUE,radial:0,axial:0,clearance:Number.MIN_VALUE,rampAngle:Number.MIN_VALUE};
+ const roughOnly=['stepdown','angle','sampling','radial','axial','surfaceError','pathTolerance'];
+ const minima={stepdown:Number.MIN_VALUE,sampling:Number.MIN_VALUE,radial:0,axial:0,clearance:Number.MIN_VALUE,rampAngle:Number.MIN_VALUE,surfaceError:Number.MIN_VALUE,pathTolerance:0};
  for(const[id,key]of Object.entries(fieldMap))s[key]=numericValue($(id).value,$(id).parentElement.textContent.trim(),{required:roughOnly.includes(id)?rough:strict,fallback:settings[key],min:minima[id]??-Infinity,max:id==='rampAngle'?89.999:Infinity});
  const depth=numericValue($('bottom').value,'Profundidade total do desbaste',{required:rough&&!smartModeEnabled(),fallback:settings.stock_top_mm-settings.bottom_mm,min:Number.MIN_VALUE});
  s.bottom_mm=s.stock_top_mm-depth;
  s.stepover_mm=numericValue($('stepover').value,'Stepover do desbaste',{required:rough,fallback:100*settings.stepover_mm/tool.diameter_mm,min:Number.MIN_VALUE,max:100})/100*tool.diameter_mm;
- s.strategy=$('strategy').value;s.cleanup_contours=$('cleanup').checked;s.domain_mode=$('domainMode').value||settings.domain_mode||'expanded';s.region_mode='layer';s.compress_collinear=true;s.obstacle_top_mm=numericValue($('obstacleTop').value,'Altura máxima de obstáculos',{required:strict,fallback:settings.obstacle_top_mm??s.stock_top_mm});
+ s.strategy=$('strategy').value;s.cleanup_contours=$('cleanup').checked;s.optimize_entries=$('optimizeEntries').checked;s.domain_mode=$('domainMode').value||settings.domain_mode||'expanded';s.region_mode='layer';s.compress_collinear=true;s.obstacle_top_mm=numericValue($('obstacleTop').value,'Altura máxima de obstáculos',{required:strict,fallback:settings.obstacle_top_mm??s.stock_top_mm});
  return s;
 }
 function regionsChanged(){renderRegions();regionList();dirty('Regiões alteradas. Recalcule antes de simular.');}
@@ -440,7 +700,7 @@ function regionList(){
  const exclusions=settings.exclusions_mm||[],limits=settings.boundaries_mm,initial=isAutomaticStockBoundary(settings,bounds());
  $('regionList').textContent=`${exclusions.length} Keep Out · ${initial?'limite inicial do bruto':limits==null?'sem Keep In':limits.length+' Keep In'} · ${smartModeEnabled()?'Rough automático':'só Rough'}`;
  $('regionList').className='dim';$('editWindows').hidden=!windows;
- $('regionNote').textContent=smartModeEnabled()?smartPolicyText(currentSmartPlan()).regions+' Nenhuma região desenhada é necessária. Keep In / Keep Out limitam a área automática. Confira o plano para ver o envelope dos centros da fresa.':windows?'Keep In e Keep Out valem só para o Rough. As duas janelas do exemplo são estimadas pelo NC; os limites originais do MeshCAM não são conhecidos.':initial?'Só para o Rough: a área inicial acompanha o bruto. Desenhar Keep In substitui essa área; Keep Out protege o que você desenhar. O Cutout segue os contornos da peça.':'Só para o Rough: Keep In permite usinar dentro; várias Keep In somam áreas. Keep Out protege a área. O motor considera o raio inteiro da fresa. O Cutout segue os contornos da peça.';
+ $('regionNote').textContent=smartModeEnabled()?smartPolicyForUi().regions+' Nenhuma região desenhada é necessária. Keep In / Keep Out limitam a área automática. Confira o plano para ver o envelope dos centros da fresa.':windows?'Keep In e Keep Out valem só para o Rough. As duas janelas do exemplo são estimadas pelo NC; os limites originais do MeshCAM não são conhecidos.':initial?'Só para o Rough: a área inicial acompanha o bruto. Desenhar Keep In substitui essa área; Keep Out protege o que você desenhar. O Cutout segue os contornos da peça.':'Só para o Rough: Keep In permite usinar dentro; várias Keep In somam áreas. Keep Out protege a área. O motor considera o raio inteiro da fresa. O Cutout segue os contornos da peça.';
  $('polygonList').replaceChildren();
  for(const[key,title]of [['exclusions_mm','Keep Out'],['boundaries_mm',initial?'Área inicial do bruto':'Keep In']])for(let i=0;i<(settings[key]||[]).length;i++){
   const row=document.createElement('div');row.className='region-item';const text=document.createElement('span');text.textContent=title+' '+(i+1)+' · '+settings[key][i].length+' pontos';
@@ -450,7 +710,7 @@ function regionList(){
 function displayPaths(){
  clearGroup(pathGroup);clearGroup(rapidGroup);if(!motion)return;
  const normal=[],cutout=[],drill=[],ramps=[],rapid=[];
- for(const m of motion.moves){const target=['travel','retract','clearance_adjust'].includes(m[0])?rapid:(m[8]==='drill'?drill:['ramp','ramp_return','plunge'].includes(m[0])?ramps:(m[8]==='cutout'?cutout:normal));target.push(...m.slice(1,7));}
+ for(const m of motion.moves){const target=['travel','retract','clearance_adjust','approach_rapid'].includes(m[0])?rapid:(m[8]==='drill'?drill:['ramp','ramp_return','plunge'].includes(m[0])?ramps:(m[8]==='cutout'?cutout:normal));target.push(...m.slice(1,7));}
  for(const[positions,color,group]of [[normal,0x239681,pathGroup],[cutout,0x307ac0,pathGroup],[drill,0x9050c0,pathGroup],[ramps,0xca9b3d,pathGroup],[rapid,0x94a6b8,rapidGroup]]){
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));group.add(new THREE.LineSegments(g,new THREE.LineBasicMaterial({color,transparent:true,opacity:.72})));
  }
@@ -460,8 +720,8 @@ function setMotion(value,projectId=null,quietStock=false){
  stop();motion=value;feedClock=null;cursor=0;
  computedProject=projectId;$('exportNC').disabled=!motion?.moves.some(m=>m[0]==='cut')||!computedProject||exportBusy;
  const rough=motion?.operations?.roughing;
- $('regionScheduleInfo').textContent=rough?.path_order==='region_first'?`${rough.regions} região(ões) · ${rough.stay_down_entries} reentrada(s) sem retração completa`:(rough?'Sequência por camadas em todas as regiões.':'');
- if(motion?.timing?.available&&motion.moves.length)feedClock=new FeedClock(motion.moves,motion.durations_s);
+ $('regionScheduleInfo').textContent=rough?.path_order==='region_first'?`${rough.regions} região(ões) · ${rough.stay_down_entries} reentrada(s) sem retração completa${rough.routed_stay_down_entries?` · ${rough.routed_stay_down_entries} por caminhos já cortados`:''}`:(rough?'Sequência por camadas em todas as regiões.':'');
+ if(motion?.timing?.available&&motion.moves.length)feedClock=new FeedClock(motion.moves,motion.durations_s,motion.timing_profiles);
  $('timeline').max=feedClock?.duration||1;$('timeline').value=0;
  $('moveCount').textContent=motion?fmt(motion.moves.length,0):'—';
  $('layerCount').textContent=motion?Object.entries(motion.operations||{}).map(([k,v])=>({roughing:'R ',drill:'D ',cutout:'C '}[k]||k+' ')+(v.depth_passes??v.holes?.length??0)).join(' · '):'—';
@@ -481,22 +741,22 @@ function updateCursor(){
  const m=motion?.moves[Math.min(index,motion.moves.length-1)];
  const p=state?.position||motion?.initial||[bounds().minimum[0],bounds().minimum[1],Number($('stockTop').value)||0];
  toolGroup.position.set(...p);$('tipPosition').textContent=`X ${fmt(p[0])} · Y ${fmt(p[1])} · Z ${fmt(p[2])}`;
- const kinds={cut:'Corte',ramp:'Rampa',ramp_return:'Retorno da rampa',plunge:'Mergulho',travel:'Travessia',retract:'Retração',approach:'Aproximação',cleared_feed:'Entrada',link_backtrack:'Retorno',link_cleared:'Ligação em área removida'};
- $('moveInfo').textContent=m?`${({cutout:'Cutout',drill:'Drill',roughing:'Roughing'})[m[8]]||'Roughing'} · ${kinds[m[0]]||m[0]} · F ${fmt(motion.feeds_mm_min?.[Math.min(index,motion.moves.length-1)]||0,0)}`:'Início do percurso';
+ const kinds={cut:'Corte',ramp:'Rampa',ramp_return:'Retorno da rampa',plunge:'Mergulho',travel:'Travessia',retract:'Retração',approach:'Aproximação',approach_rapid:'Aproximação rápida',cleared_feed:'Entrada',link_backtrack:'Retorno',link_cleared:'Ligação em área removida'};
+ $('moveInfo').textContent=m?`${({cutout:'Cutout',drill:'Drill',roughing:'Roughing'})[m[8]]||'Roughing'} · ${kinds[m[0]]||m[0]} · F ${fmt(motion.feeds_mm_min?.[Math.min(index,motion.moves.length-1)]||0,0)}${motion.timing?.model?.startsWith('acceleration')?` · Previsto ${fmt(state?.speed_mm_min||0,0)} mm/min`:''}`:'Início do percurso';
  stockWanted=state?.stockIndex||0;
  showStockSurface();
 }
 function resetStock(reportErrors=true){
- stockSampleSnapshot=null;stockGeneration++;
+ stockSampleSnapshot=null;stockGeneration++;resetSolid();stockConfig=null;
  if(!data||!tool){stockReady=false;return;}stockBusy=true;stockReady=false;stockWanted=0;stockApplied=-1;stockLastSent=0;$('stockStatus').textContent='REMOÇÃO · ATUALIZANDO';
- cancelSolid();solidFailedIndex=null;solidIndex=-1;solidGeneration=-1;$('surfaceStatus').textContent='Prévia em grade';
- if(solidMesh){scene.remove(solidMesh);solidMesh.geometry.dispose();solidMesh.material.dispose();solidMesh=null;}
+ $('surfaceStatus').textContent='Prévia em grade';
  if(stockMesh)stockMesh.visible=false;if(stockWire)stockWire.visible=false;
  $('volume').textContent='—';$('protectedCount').textContent='—';$('stockSummary').textContent='Atualizando grade…';
  try{
   const config={...readStockSettings(),top:number('stockTop'),bottom:simulationBottom(),cutoutUseRegions:false,diameter:tool.diameter_mm,boundaries:smartModeEnabled()&&settings.boundaries_mm?.length===0?null:settings.boundaries_mm,exclusions:settings.exclusions_mm};
   stockConfig=config;
   worker.postMessage({type:'init',generation:stockGeneration,config,moves:motion?.moves||[]});
+  prepareSolidBackground();
  }catch(e){stockBusy=false;$('stockStatus').textContent='GRADE INDISPONÍVEL';$('stockSummary').textContent=e.message;if(stockMesh)stockMesh.visible=false;if(stockWire)stockWire.visible=false;if(reportErrors)toast(e.message,true);}
 }
 function requestStock(){if(!stockReady)return;if(stockWanted!==stockApplied)$('stockStatus').textContent='REMOÇÃO · ATUALIZANDO';if(stockWanted===stockApplied){scheduleSolid();return;}if(stockBusy||!data)return;stockBusy=true;stockLastSent=performance.now();worker.postMessage({type:'seek',generation:stockGeneration,target:stockWanted});}
@@ -506,12 +766,13 @@ worker.onmessage=({data:s})=>{
  if(s.type!=='stock')return;
  stockApplied=s.index;stockReady=true;
  stockSampleSnapshot=s;
+ if(!gpuStock){
  if(!stockMesh||stockMesh.userData.nx!==s.nx||stockMesh.userData.ny!==s.ny){
   if(stockMesh){scene.remove(stockMesh);stockMesh.geometry.dispose();stockMesh.material.dispose();}
   const g=new THREE.BufferGeometry(),positions=new Float32Array(s.heights.length*3);
   for(let j=0;j<s.ny;j++)for(let i=0;i<s.nx;i++){const n=j*s.nx+i;positions[n*3]=s.config.x0+(i+.5)*s.dx;positions[n*3+1]=s.config.y0+(j+.5)*s.dy;}
   g.setAttribute('position',new THREE.BufferAttribute(positions,3));g.setIndex(stockGridIndices(s.nx,s.ny));
-  stockMesh=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:0xc9b388,roughness:.85,side:THREE.DoubleSide}));stockMesh.userData={nx:s.nx,ny:s.ny};scene.add(stockMesh);
+  stockMesh=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:0xeadfc8,roughness:.85,side:THREE.DoubleSide}));stockMesh.userData={nx:s.nx,ny:s.ny};scene.add(stockMesh);
  }
  const position=stockMesh.geometry.getAttribute('position');
  for(let j=0;j<s.ny;j++)for(let i=0;i<s.nx;i++){const n=j*s.nx+i;position.array[n*3]=s.config.x0+(i+.5)*s.dx;position.array[n*3+1]=s.config.y0+(j+.5)*s.dy;position.array[n*3+2]=s.heights[n];}
@@ -520,6 +781,7 @@ worker.onmessage=({data:s})=>{
  stockMesh.geometry.computeBoundingSphere();stockMesh.visible=mode==='stock';
  if(stockWire){scene.remove(stockWire);stockWire.geometry.dispose();stockWire.material.dispose();}
  const box=new THREE.Box3(new THREE.Vector3(s.config.x0,s.config.y0,s.config.bottom),new THREE.Vector3(s.config.x1,s.config.y1,s.config.top));stockWire=new THREE.Box3Helper(box,0x9e8d72);stockWire.visible=mode==='stock';scene.add(stockWire);
+ }
  $('volume').textContent=fmt(s.volume,1)+' mm³';$('protectedCount').textContent=fmt(s.protectedCount,0);$('protectedCount').style.color=s.protectedCount?'#bd4f53':'';
  $('stockSummary').textContent=`Grade ${s.nx} × ${s.ny} · fundo Z ${fmt(s.config.bottom,3)} mm`;
  if(stockWanted!==s.index)requestStock();else $('stockStatus').textContent='REMOÇÃO NA GRADE';
@@ -537,6 +799,7 @@ function updateWorkspaceAvailability(){
  $('toolSelect').disabled=!tool;$('editTool').disabled=!tool;
 }
 function adopt(sceneData){
+ if(presetTimer!==null)rememberMachining().catch(error=>{presetError='Ajustes não salvos: '+error.message;renderPresets();});
  resetOriginReference();
  clearCutoutRecovery();cancelDraw();
  smartPlanPreview=null;manualOperationState=null;manualCutoutPreferences=null;
@@ -545,9 +808,9 @@ function adopt(sceneData){
  $('partName').textContent=data.name;$('workspaceTitle').textContent=data.name;$('dimensions').textContent=data.mesh.bounds_mm.size.map(v=>fmt(v)).join(' × ')+' mm · '+fmt(data.mesh.triangle_count,0)+' triângulos';
  $('feedProvenance').textContent=sceneData.isDemo?'Peça geométrica de demonstração. Avanços e RPM são exemplos para simular; ajuste à ferramenta e ao material reais.':'';
  fillFields();displayToolSelect();setModel(data.triangles);renderRegions();regionList();setMotion(data.motion,data.project_id);
- $('sceneTag').textContent=sceneData.isDemo?'EXEMPLO · PLACA COM BOLSÃO':sceneData.approximate_regions?'REGIÕES APROXIMADAS':'PROJETO LOCAL';$('notice').textContent=sceneData.approximate_regions?'Regiões aproximadas · confira seus limites':'Motor experimental · sem conexão com máquina';
+ $('sceneTag').textContent=sceneData.isDemo?'EXEMPLO · PLACA COM BOLSÃO':sceneData.approximate_regions?'REGIÕES APROXIMADAS':'PROJETO LOCAL';$('notice').textContent=sceneData.approximate_regions?'Regiões aproximadas · confira seus limites':'Percursos locais · confira na simulação';
  $('planState').textContent=motion?'Percurso validado pelo motor':'Calcular percurso';$('planState').className='pill';$('calcStatus').textContent=motion?'Percurso carregado pronto para reprodução.':'Confira os parâmetros e calcule os percursos.';$('loadingScene').hidden=true;
- updateWorkspaceAvailability();syncPlacementUi();scheduleRemember();
+ updateWorkspaceAvailability();syncPlacementUi();scheduleRemember({updateSelected:false});
 }
 function request(){if(!data)throw Error('Abra um STL primeiro.');settings=readSettings();operations=readOperations();return {asset:data.asset,placement,tool,settings,operations,notes:data.notes||'Projeto preparado pela interface local.',ui:{windows,stock:readStockSettings(),approximate_regions:!!data.approximate_regions}};}
 function sceneForNewMesh(inspected,currentSettings,currentOperations){
@@ -574,6 +837,7 @@ $('stlFile').onchange=async()=>{
 function placementUiState(detail=false){
  const result={panel:placementPanelTab,enabled:!!data&&!busy&&!exportBusy&&!placementUiBusy,
   undo_available:!!placementUndo&&placementUndo.revision===revision,origin:placementOrigin(data?.mesh.bounds_mm),
+  second_side:{orientation:$('secondSideAxis').value,diameter_mm:numericValue($('secondSideDiameter').value,'Diâmetro da fixação',{required:false}),height_mm:numericValue($('secondSideHeight').value,'Altura da fixação',{required:false})},
   reference:{picking:originPicking,picker_hides_panel:originPicking&&$('placementPanel').hidden,point_mm:originReference,
    anchor:originReferenceAnchor,automatic_anchor:originReferenceId(data?.mesh.bounds_mm),contours:originOutline?.polygons_mm.length||0}};
  if(detail){
@@ -646,32 +910,33 @@ function restorePlacementCamera(frame,recenter=false){
 }
 async function applyPlacementCandidate(candidate,{frameShift=false,secondSide=null}={}){
  commandIdle();if(!data)throw Error('Abra um STL primeiro.');
- if(candidate.xy_origin==='keep'&&candidate.z_origin==='keep'&&samePlacement(candidate,placement,data.mesh))return false;
+ const unchanged=candidate.xy_origin==='keep'&&candidate.z_origin==='keep'&&samePlacement(candidate,placement,data.mesh);
+ if(unchanged&&!secondSide)return false;
  const saved=placementSnapshot(),atRevision=revision;placementUiBusy=true;syncPlacementUi();stop();
  try{
-  const inspected=await api('/api/inspect',{asset:data.asset,placement:candidate});
+  const inspected=unchanged?null:await api('/api/inspect',{asset:data.asset,placement:candidate});
   if(revision!==atRevision||busy||exportBusy)throw Error('A configuração mudou durante o posicionamento. Tente novamente.');
   const delta=candidate.translation_mm.map((v,i)=>v-saved.scene.mesh.transform.translation_mm[i]);
-  let next=frameShift?shiftWorkFrame(saved.scene,inspected,delta):sceneForNewMesh(inspected,saved.scene.settings,saved.scene.operations);
+  let next=unchanged?{...saved.scene,motion:null,project_id:null}:frameShift?shiftWorkFrame(saved.scene,inspected,delta):sceneForNewMesh(inspected,saved.scene.settings,saved.scene.operations);
   if(secondSide)next=secondSideState(next,secondSide);
   adopt(next);
   if(frameShift)restorePlacementCamera({...saved.camera,position:saved.camera.position.map((v,i)=>v+delta[i]),target:saved.camera.target.map((v,i)=>v+delta[i])});
   else restorePlacementCamera(saved.camera);
   placementUndo={...saved,revision};
   for(const axis of ['X','Y','Z'])$('placementDelta'+axis).value='0';
-  toast(frameShift?'Zero redefinido. Regiões, fixação e profundidades preservadas; recalcule os percursos.':secondSide?'Segunda face: apenas Rough, sem Cutout, com a fixação central protegida. Escolha o zero na borda.':'Posição aplicada. Regiões limpas; use Desfazer posição para recuperá-las.');return true;
+  toast(frameShift?'Zero redefinido. Regiões, fixação e profundidades preservadas; recalcule os percursos.':secondSide?'Fixação central preparada na orientação escolhida. Confira o zero na borda e recalcule.':'Posição aplicada. Regiões limpas; use Desfazer posição para recuperá-las.');return true;
  }finally{placementUiBusy=false;syncPlacementUi();}
 }
 async function runPlacementAction(action){
  commandIdle();if(!data)throw Error('Abra um STL primeiro.');
  return applyPlacementCandidate(placementAction(placement,data.mesh,data.triangles,action),{frameShift:action.kind.startsWith('origin_')});
 }
-async function prepareSecondSide(axis='x',fixture){
- if(!['x','y'].includes(axis))throw Error('Escolha X ou Y para virar a peça.');
+async function prepareSecondSide(axis='current',fixture){
+ if(!['current','x','y'].includes(axis))throw Error('Escolha manter a orientação atual ou virar em X/Y.');
  commandIdle();if(!data)throw Error('Abra um STL primeiro.');
  secondSideState({settings,operations,mesh:data.mesh},fixture);
- const candidate=placementAction(placement,data.mesh,data.triangles,{kind:'rotate',axis,turns:2});
- await applyPlacementCandidate(candidate,{secondSide:fixture});selectOperationTab('rough');setPlacementPanel('origin');return commandState();
+ const candidate=placementAction(placement,data.mesh,data.triangles,axis==='current'?{kind:'translate',delta_mm:[0,0,0]}:{kind:'rotate',axis,turns:2});
+ await applyPlacementCandidate(candidate,{secondSide:fixture});$('secondSideAxis').value='current';selectOperationTab('rough');setPlacementPanel('origin');return commandState();
 }
 function cancelOriginPick(){
  const wasPicking=originPicking;originPicking=false;originRequest++;controls.enabled=!drawMode;
@@ -762,7 +1027,7 @@ const placementClick=action=>runPlacementAction(action).catch(error=>toast(error
 for(const button of $('placementDock').querySelectorAll('[data-placement-panel]'))button.onclick=()=>{
  try{setPlacementPanel(placementPanelTab===button.dataset.placementPanel?null:button.dataset.placementPanel);}catch(error){toast(error.message,true);}
 };
-for(const button of $('placementDock').querySelectorAll('[data-placement-rotate]'))button.onclick=()=>placementClick({kind:'rotate',axis:button.dataset.placementRotate,turns:Number(button.dataset.turns)});
+for(const button of $('placementDock').querySelectorAll('[data-placement-rotate]'))button.onclick=()=>placementClick({kind:'rotate',axis:button.dataset.placementRotate,...(button.dataset.angle!==undefined?{angle_deg:Number(button.dataset.angle)}:{turns:Number(button.dataset.turns)})});
 for(const button of $('placementDock').querySelectorAll('[data-placement-xy]'))button.onclick=()=>placementClick({kind:'origin_xy',anchor:button.dataset.placementXy.split(',').map(Number)});
 for(const button of $('placementDock').querySelectorAll('[data-placement-z]'))button.onclick=()=>placementClick({kind:'origin_z',anchor:button.dataset.placementZ});
 $('closePlacement').onclick=()=>setPlacementPanel(null);
@@ -795,19 +1060,27 @@ const operationList=createOperationList($('operationList'),{
 });
 $('machiningMode').onchange=()=>{
  if(smartModeEnabled()){
-  manualOperationState=operationList.getState();manualCutoutPreferences={contours:$('cutoutContours').value,reuse:$('cutoutUsePriorRoughing').checked};
-  $('cutoutContours').value='external';$('cutoutUsePriorRoughing').checked=true;
+  manualOperationState=operationList.getState();manualCutoutPreferences={contours:$('cutoutContours').value,reuse:$('cutoutUsePriorRoughing').checked,depth:$('cutoutDepth').value,roughDepth:$('bottom').value};
+  $('cutoutContours').value=$('smartPartReleased').checked?'internal':'external';$('cutoutUsePriorRoughing').checked=true;
  }else{
   if(manualOperationState){operationList.setState(manualOperationState);$('operationOrder').value=operationOptionsFromList(manualOperationState).order;manualOperationState=null;}
-  if(manualCutoutPreferences){$('cutoutContours').value=manualCutoutPreferences.contours;$('cutoutUsePriorRoughing').checked=manualCutoutPreferences.reuse;manualCutoutPreferences=null;}
+  if(manualCutoutPreferences){$('cutoutContours').value=manualCutoutPreferences.contours;$('cutoutUsePriorRoughing').checked=manualCutoutPreferences.reuse;$('cutoutDepth').value=manualCutoutPreferences.depth;$('bottom').value=manualCutoutPreferences.roughDepth;manualCutoutPreferences=null;}
  }
- syncSmartOperationList();updateOperationControls();regionList();dirty(smartModeEnabled()?'Modo inteligente ativo. Confira o plano ou calcule Rough e Cutout juntos.':'Modo manual ativo. Confira as operações e calcule novamente.');updateHints();
+ syncSmartDepthFields();syncSmartOperationList();updateOperationControls();regionList();dirty(smartModeEnabled()?'Modo inteligente ativo. Confira o plano ou calcule Rough e Cutout juntos.':'Modo manual ativo. Confira as operações e calcule novamente.');updateHints();
 };
 $('inspectSmartPlan').onclick=()=>inspectSmartPlan().catch(error=>toast(error.message,true));
+function changeSmartStockCondition(){
+ if(smartModeEnabled())$('cutoutContours').value=$('smartPartReleased').checked?'internal':'external';
+ dirty('Condição da peça alterada. Confira o plano ou recalcule.');
+ syncSmartOperationList();updateOperationControls();updateHints();regionList();
+}
+$('smartPartReleased').onchange=changeSmartStockCondition;
 $('reviewCenterCutting').onclick=()=>{selectOperationTab('rough');$('drillCenterCutting').focus({preventScroll:false});};
-for(const id of [...Object.keys(fieldMap),'smartStockBottom','smartBreakthrough','smartSkin','bottom','stepover','strategy','domainMode','cleanup','obstacleTop','cutoutDepth','cutoutStepdown','cutoutDirection','cutoutContours','cutoutUsePriorRoughing','drillDepth','drillPeck','drillTolerance','drillFeed','drillAllowHelix','drillCenterCutting','drillCompensateFacets','roughFeed','cutoutFeed','plungeFeed','rapidFeed','spindleRpm','roughingOrder']){
- $(id).addEventListener('change',()=>{updateOperationControls();updateHints();dirty();if(id==='stockTop')renderRegions();});
+$('editReleaseDepth').onclick=()=>{selectOperationTab('cutout');$('cutoutDepth').focus({preventScroll:false});};
+for(const id of [...Object.keys(fieldMap),...TIMING_FORM_IDS,'smartStockBottom','smartBreakthrough','smartSkin','bottom','stepover','strategy','domainMode','cleanup','optimizeEntries','obstacleTop','cutoutDepth','cutoutStepdown','cutoutSmoothing','cutoutDirection','cutoutContours','cutoutUsePriorRoughing','drillDepth','drillPeck','drillRetractMode','drillRetract','drillRapidReentry','drillReentryGap','drillTolerance','drillFeed','drillAllowHelix','drillCenterCutting','drillCompensateFacets','roughFeed','cutoutFeed','plungeFeed','rapidFeed','spindleRpm','roughingOrder']){
+ $(id).addEventListener('change',()=>{if(['cutoutDepth','smartBreakthrough','smartStockBottom','stockTop'].includes(id))syncSmartDepthFields(id);updateOperationControls();updateHints();dirty();if(id==='stockTop')renderRegions();});
  if($(id).type==='number')$(id).addEventListener('input',()=>{
+  if(['cutoutDepth','smartBreakthrough','smartStockBottom','stockTop'].includes(id))syncSmartDepthFields(id);
   updateHints();
   // Invalidate immediately, including while an older calculation is running.
   // An incomplete number during typing is not an error to toast.
@@ -838,14 +1111,47 @@ async function inspectDrill(){
  }catch(error){$('drillInspection').textContent=error.message;throw error;}
  finally{$('inspectDrill').disabled=false;}
 }
+$('editDrillPlunge').onclick=()=>{$('sharedFeeds').open=true;$('plungeFeed').focus({preventScroll:false});};
 $('inspectDrill').onclick=()=>inspectDrill().catch(error=>toast(error.message,true));
-function fillTool(t){for(const[id,key]of Object.entries({toolId:'id',toolName:'name',toolDiameter:'diameter_mm',toolLength:'cutting_length_mm',toolOverall:'overall_length_mm',toolFeed:'feed_mm_min',toolPlunge:'plunge_mm_min',toolRpm:'spindle_rpm',toolFlutes:'flutes',toolNotes:'notes'}))$(id).value=t[key]??'';$('toolError').textContent='';}
+const TOOL_EDITOR_FIELDS={id:'toolId',name:'toolName',diameter_mm:'toolDiameter',cutting_length_mm:'toolLength',overall_length_mm:'toolOverall',feed_mm_min:'toolFeed',plunge_mm_min:'toolPlunge',spindle_rpm:'toolRpm',flutes:'toolFlutes',notes:'toolNotes'};
+function fillTool(t){for(const[key,id]of Object.entries(TOOL_EDITOR_FIELDS))$(id).value=t[key]??'';$('toolError').textContent='';}
+function toolEditorState(){
+ const values={},invalid=[];
+ for(const[key,id]of Object.entries(TOOL_EDITOR_FIELDS)){
+  const input=$(id);values[key]=input.value;
+  if(!input.validity.valid)invalid.push({field:key,value:input.value,message:input.validationMessage,
+   value_missing:input.validity.valueMissing,bad_input:input.validity.badInput,step_mismatch:input.validity.stepMismatch,
+   range_underflow:input.validity.rangeUnderflow,range_overflow:input.validity.rangeOverflow,pattern_mismatch:input.validity.patternMismatch});
+ }
+ return {open:$('toolDialog').open,valid:invalid.length===0,values,invalid,error:$('toolError').textContent||null};
+}
 $('editTool').onclick=()=>{fillTool(tool||{});$('toolDialog').showModal();};
 $('newTool').onclick=()=>fillTool({id:'topo-'+Date.now(),name:'Nova fresa de topo reto',diameter_mm:3.175,cutting_length_mm:22});
-$('toolForm').onsubmit=async e=>{e.preventDefault();try{
+$('toolForm').addEventListener('input',()=>{$('toolError').textContent='';});
+async function saveToolForm(){
+ commandIdle();
+ if(!$('toolForm').checkValidity())throw Error('Confira os campos da ferramenta: '+toolEditorState().invalid[0]?.message);
  const t={...tool,id:$('toolId').value,name:$('toolName').value,kind:'flat_end_mill',diameter_mm:number('toolDiameter'),cutting_length_mm:number('toolLength'),overall_length_mm:number('toolOverall',true),feed_mm_min:number('toolFeed',true),plunge_mm_min:number('toolPlunge',true),spindle_rpm:number('toolRpm',true),flutes:number('toolFlutes',true),notes:$('toolNotes').value};
  const saved=await api('/api/tools',{tool:t,replace:tools.some(old=>old.id===t.id)});tools=saved.tools;if(JSON.stringify(t)!==JSON.stringify(tool))$('drillCenterCutting').checked=false;tool=t;displayToolSelect();makeTool();updateHints();dirty('Ferramenta salva. Recalcule os percursos.');$('toolDialog').close();toast('Ferramenta salva na biblioteca local.');
- }catch(e){$('toolError').textContent=e.message;}};
+ return toolEditorState();
+}
+$('toolForm').onsubmit=async e=>{e.preventDefault();try{await saveToolForm();}catch(e){$('toolError').textContent=e.message;}};
+async function toolEditorCommand(command){
+ const mode=command.mode||'state';
+ if(mode==='state')return toolEditorState();
+ if(!['open','set','save','close'].includes(mode))throw Error('mode deve ser state, open, set, save ou close.');
+ commandIdle();
+ if(mode==='open'){fillTool(tool||{});if(!$('toolDialog').open)$('toolDialog').showModal();return toolEditorState();}
+ if(mode==='close'){$('toolDialog').close();return toolEditorState();}
+ if(!$('toolDialog').open)throw Error('Abra o editor da ferramenta primeiro.');
+ if(mode==='set'){
+  const fields=Object.entries(commandObject(command.values,'values'));
+  for(const[key,value]of fields)if(!Object.hasOwn(TOOL_EDITOR_FIELDS,key)||!(value===null||typeof value==='string'||typeof value==='number'&&Number.isFinite(value)))throw Error('Campo ou valor inválido no editor da ferramenta: '+key);
+  for(const[key,value]of fields){const input=$(TOOL_EDITOR_FIELDS[key]);input.value=value??'';input.dispatchEvent(new Event('input',{bubbles:true}));}
+  return toolEditorState();
+ }
+ try{return await saveToolForm();}catch(error){$('toolError').textContent=error.message;throw error;}
+}
 for(const b of document.querySelectorAll('[data-close]'))b.onclick=()=>$(b.dataset.close).close();
 $('cancelCalculation').onclick=cancelCalculation;
 async function startCalculation(strict=false){
@@ -1036,7 +1342,7 @@ $('depthColors').onchange=()=>setDepthColoring($('depthColors').checked);
 $('play').onclick=()=>{if(!feedClock)return;if(cursor>=feedClock.duration)cursor=0;lastTime=performance.now();playing=!playing;if(playing)cancelSolid();$('play').textContent=playing?'Ⅱ Pausar':'▶ Reproduzir';$('play').setAttribute('aria-label',playing?'Pausar':'Reproduzir');$('play').setAttribute('aria-pressed',String(playing));if(!playing)requestStock();};
 $('restart').onclick=()=>{stop();cancelSolid();cursor=0;updateCursor();requestStock();};$('finish').onclick=()=>{stop();cancelSolid();cursor=feedClock?.duration||0;updateCursor();requestStock();};
 $('timeline').oninput=()=>{stop();cancelSolid();cursor=Number($('timeline').value);updateCursor();requestStock();};
-$('resetStock').onclick=()=>{stop();cursor=0;updateCursor();resetStock();};
+$('resetStock').onclick=()=>{stop();cancelSolid();cursor=0;updateCursor();requestStock();};
 function animate(time){requestAnimationFrame(animate);const dt=Math.max(0,(time-lastTime)/1000||0);lastTime=time;if(playing&&feedClock){cursor=Math.min(feedClock.duration,cursor+Number($('speed').value)*dt);updateCursor();if(cursor>=feedClock.duration){stop();requestStock();}}if(stockWanted>=0&&!stockBusy&&time-stockLastSent>150&&playing)requestStock();controls.update();renderer.render(scene,camera);}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
 requestAnimationFrame(animate);
@@ -1048,15 +1354,24 @@ function commandState(detail=false){
  return {model:data?{name:data.name,asset:data.asset,...data.mesh}:null,tool,settings:s,operations:o,operation_list:operationList.getState(),placement,
   workspace:{empty:!data,empty_visible:!$('emptyScene').hidden,can_calculate:!$('calculate').disabled,can_save:!$('saveProject').disabled},
   placement_ui:placementUiState(detail),presets:presetState(detail),
+  timing_ui:{model:$('timingModel').value,rapid_editable:!$('rapidFeed').disabled,machine_profile_editable:!$('machineTimingProfile').disabled,summary:$('timingEstimateHint').textContent},
+  controller:typeof grblState==='function'?grblState():null,
+  rough_ui:{strategy:$('strategy').value,efficiency_visible:!$('roughQuality').hidden,z_approximation_visible:!$('surfaceErrorField').hidden,optimize_entries:$('optimizeEntries').checked},
+  depth_ui:{rough_depth_mm:numericValue($('bottom').value,'Profundidade do Rough',{required:false}),cutout_depth_mm:numericValue($('cutoutDepth').value,'Profundidade do Cutout',{required:false}),cutout_editable:!$('cutoutDepth').disabled,breakthrough_mm:numericValue($('smartBreakthrough').value,'Corte extra',{required:false}),summary:$('smartReleaseSummary').textContent,error:$('cutoutDepth').dataset.depthError||null},
+  cutout_ui:{contours:$('cutoutContours').value,contours_editable:!$('cutoutContours').disabled,hint:$('cutoutContourHint').textContent},
+  smart_ui:{part_released:$('smartPartReleased').checked,description:$('smartModeDescription').textContent,retention_visible:!$('smartSkinField').hidden},
   stock:data?readStockSettings():null,regions,notes:data?.notes||'',revision,smart_plan:smartPlanForState(currentSmartPlan(),detail),
   regions_ui:{picker:regionPicker?.state(),drawing:drawMode?{kind:drawMode==='boundary'?'keepin':'keepout',shape:drawShape,vertices:draftPoints.length}:null},
   feedback:{cutout_recovery:cutoutRecovery?{action:cutoutRecovery.action,label:cutoutRecovery.label,message:cutoutRecovery.message}:null},
   calculation:{busy,active_job:activeCalculationJob,last_job:lastCalculationJob,computed_project:computedProject,status:$('calcStatus').textContent},
   view:{mode,tab:operationTabs.find(name=>!$(name+'Panel').hidden),zoom:camera.zoom,position:camera.position.toArray(),target:controls.target.toArray(),depth_coloring:depthColoring,depth_scale:data?depthScale(bounds().minimum[2],bounds().maximum[2]):null,automatic_regions:automaticRegionsViewState(),
    layers:{model:modelGroup.visible,paths:pathGroup.visible,rapids:rapidGroup.visible,regions:regionGroup.visible}},
-  simulation:{playing,speed:Number($('speed').value),time_s:cursor,duration_s:feedClock?.duration||0,
+  simulation:{playing,speed:Number($('speed').value),time_s:cursor,duration_s:feedClock?.duration||0,estimated_feed_mm_min:feedClock?.at(cursor).speed_mm_min||0,
    moves:motion?.moves.length||0,position:toolGroup.position.toArray(),stock_ready:stockReady,stock_busy:stockBusy,
-   stock_applied:stockApplied,stock_target:stockWanted,solid_busy:solidBusy,solid_ready:!!solidMesh&&solidIndex===stockWanted&&solidGeneration===stockGeneration,
+   stock_applied:stockApplied,stock_target:stockWanted,solid_busy:solidBusy,solid_ready:gpuStockState().ready||!!solidMesh&&solidIndex===stockWanted&&solidGeneration===stockGeneration&&stockReady&&stockApplied===stockWanted,
+   solid_volume_mm3:solidMesh&&solidIndex===stockWanted&&solidGeneration===stockGeneration?solidMesh.userData.volume:null,
+   solid_key:solidMesh&&solidGeneration===stockGeneration?solidMesh.userData.cache_key:null,stock_generation:stockGeneration,
+   solid_precompute:{...solidPrefetch},solid_cache:solidCacheState(),gpu:gpuStockState(),
    surface:$('surfaceStatus').textContent,removed_volume:$('volume').textContent,protected_cells:$('protectedCount').textContent}};
 }
 function commandObject(value,label){if(!value||typeof value!=='object'||Array.isArray(value))throw Error(label+': informe um objeto.');return value;}
@@ -1085,14 +1400,29 @@ async function patchCommandConfig(command){
 async function executeCommand(command){
  commandObject(command,'Comando');const action=command.action;
  if(action==='state')return commandState(!!command.detail);
+ if(action==='controller.ports')return grblPorts();
+ if(action==='controller.read')return grblRead(command);
+ if(action==='controller.apply')return grblApply(command);
+ if(action==='controller.import'){commandIdle();await grblUseEstimate();return commandState();}
  if(action==='tools.list')return {tools,selected:tool?.id||null};
+ if(action==='tool.editor')return toolEditorCommand(command);
  if(action==='presets.list')return presetState(true);
  if(action==='presets.save')return savePreset(command.name,command.id);
  if(action==='presets.apply'){commandIdle();return applyPreset(command.id);}
  if(action==='presets.delete'){commandIdle();await storePreset({action:'delete',id:command.id});return presetState(true);}
- if(action==='presets.remember'){await rememberMachining();return presetState();}
+ if(action==='presets.remember'){await rememberMachining({updateSelected:true});return presetState();}
  if(action==='drill.inspect')return inspectDrill();
  if(action==='machining.plan')return inspectSmartPlan();
+ if(action==='cutout.depth'){
+  commandIdle();if(!data)throw Error('Abra um STL primeiro.');
+  const depth=commandNumber(command.depth_mm,'Profundidade do Cutout',Number.MIN_VALUE),top=number('stockTop');
+  let patch={cutout_bottom_mm:top-depth};
+  if(smartModeEnabled()){
+   const raw=$('smartStockBottom').value,bottom=raw.trim()===''?null:numericValue(raw,'Fundo do bruto');
+   patch={smart_breakthrough_mm:breakthroughForCutDepth(depth,top,bounds().minimum[2],bottom)};
+  }
+  return patchCommandConfig({operations:patch});
+ }
  if(action==='cutout.recovery.apply')return applyCutoutRecovery();
  if(action==='regions.cancel'){cancelDraw();return commandState();}
  if(action==='regions.picker'||action==='regions.draw'){
@@ -1136,7 +1466,7 @@ async function executeCommand(command){
   return referenceOrigin(commandVector(command.point_mm,'point_mm',2),command.snap??true,command.magnet_mm===undefined?0:commandNumber(command.magnet_mm,'magnet_mm',0));
  }
  if(action==='placement.zero')return setAutomaticOrigin(command.anchor);
- if(action==='placement.second_side')return prepareSecondSide(command.axis??'x',command.fixture);
+ if(action==='placement.second_side')return prepareSecondSide(command.axis??'current',command.fixture);
  if(action==='placement.action'){await runPlacementAction(command);return commandState();}
  if(action==='placement.undo'){undoPlacement();return commandState();}
  if(action==='tool.set'||action==='tool.save'){
@@ -1194,6 +1524,12 @@ async function executeCommand(command){
  }
  if(action==='view.capture'){renderer.render(scene,camera);return {mime:'image/png',data_url:renderer.domElement.toDataURL('image/png')};}
  if(action==='simulation.sample'){
+  if(command.surface!==undefined&&!['grid','gpu'].includes(command.surface))throw Error('surface deve ser grid ou gpu.');
+  if(command.surface==='gpu'){
+   updateGpuStock(true);
+   if(!gpuStockState().ready)throw Error(gpuStockError||'Superfície GPU indisponível. Calcule os percursos primeiro.');
+   return {index:stockWanted,...gpuStock.sample(command.points)};
+  }
   if(!stockReady||stockBusy||stockApplied!==stockWanted||!stockSampleSnapshot||stockSampleSnapshot.generation!==stockGeneration||stockSampleSnapshot.index!==stockApplied)
    throw Error('Aguarde a grade da simulação atingir a posição atual antes de amostrar; use simulation.wait.');
   return {index:stockApplied,...sampleStockGrid(stockSampleSnapshot,command.points)};
@@ -1210,11 +1546,31 @@ async function executeCommand(command){
   return commandState().simulation;
  }
  if(action==='simulation.play'){if(!feedClock)throw Error('Calcule um percurso com feedrate antes de reproduzir.');if(!playing)$('play').onclick();return commandState().simulation;}
+ if(action==='simulation.benchmark'){
+  commandIdle();if(!feedClock||!gpuStock)throw Error('Calcule percursos com a superfície GPU disponível primeiro.');
+  const fractions=command.fractions??[0,.2,.4,1,0,.4,1],repeats=command.repeats??1;
+  if(!Array.isArray(fractions)||fractions.length<1||fractions.length>16||!Number.isInteger(repeats)||repeats<1||repeats>3||fractions.length*repeats>32)throw Error('Use 1 a 16 frações e 1 a 3 repetições, até 32 quadros.');
+  for(const fraction of fractions)commandNumber(fraction,'fraction',0,1);
+  const saved={cursor,mode,playing},frames=[];stop();cancelSolid();
+  try{
+   mode='stock';modelGroup.visible=false;pathGroup.visible=false;
+   for(let repeat=0;repeat<repeats;repeat++)for(const fraction of fractions){
+    const started=performance.now();cursor=fraction*feedClock.duration;updateCursor();updateGpuStock(true);
+    const submitted=performance.now();renderer.render(scene,camera);renderer.getContext().finish();
+    frames.push({fraction,target:stockWanted,submission_ms:submitted-started,completed_ms:performance.now()-started});
+   }
+   const gpu=gpuStockState();
+   return {frames,gpu,renderer_info:{renderer:gpu.renderer,vendor:gpu.vendor,software_hint:gpu.software_hint},synchronization:'gl.finish only in this explicit benchmark; completed_ms includes the rendered frame'};
+  }finally{
+   cursor=saved.cursor;mode=saved.mode;modelGroup.visible=$('showModel').checked;pathGroup.visible=$('showPaths').checked;updateCursor();requestStock();
+   if(saved.playing){playing=true;lastTime=performance.now();$('play').textContent='Ⅱ Pausar';$('play').setAttribute('aria-pressed','true');}
+  }
+ }
  if(action==='simulation.pause'){stop();requestStock();return commandState().simulation;}
  if(action==='simulation.seek'){
   if(!feedClock)throw Error('Nenhum percurso disponível.');
   const time=command.fraction!==undefined?commandNumber(command.fraction,'fraction',0,1)*feedClock.duration:commandNumber(command.time_s,'time_s',0,feedClock.duration);
-  stop();cancelSolid();cursor=time;updateCursor();requestStock();return commandState().simulation;
+  stop();cancelSolid();cursor=time;updateCursor();updateGpuStock(true);requestStock();return commandState().simulation;
  }
  if(action==='simulation.reset'){$('resetStock').onclick();return commandState().simulation;}
  throw Error('Comando desconhecido: '+action);

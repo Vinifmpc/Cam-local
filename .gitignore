@@ -24,6 +24,7 @@ Thumbs.db
 !/work/roughing/
 !/work/ui-runtime/
 !/work/geometry-runtime/
+!/work/cncjs-widget/
 /work/cam-ui/*
 !/work/cam-ui/static/
 !/work/cam-ui/licenses/
@@ -43,6 +44,11 @@ Thumbs.db
 /work/roughing/*
 !/work/roughing/test_*.py
 !/work/roughing/audit_gcode.py
+!/work/roughing/annular_pocket.py
+!/work/roughing/contour_flow.py
+!/work/roughing/fixture_travel.py
+!/work/roughing/motion_timing.py
+!/work/roughing/rough_quality.py
 !/work/roughing/camadas_desbaste.py
 !/work/roughing/cam_operations.py
 !/work/roughing/cam_project.py

@@ -30,7 +30,9 @@ Abra **CAM Local.exe**. A janela inicia sem peça; use **Abrir STL** ou **Abrir 
 
 O WebView2 precisa estar instalado no Windows. Dados persistentes ficam em `%LOCALAPPDATA%/CAMLocal`; este pacote não inclui projetos ou NCs pessoais.
 
-Use os ícones Girar, Origem e Mover na vista 3D para posicionar a peça. O modo inteligente usa Rough nos detalhes e pode recortar miolos passantes antes de liberar o exterior, preservando a sobra para retirada. Confira ferramenta, unidade, posicionamento e avanços; simule antes de exportar. O motor é experimental e não se conecta à máquina.
+Use os ícones Girar, Origem e Mover na vista 3D para posicionar a peça. O modo inteligente usa Rough nos detalhes e pode recortar miolos passantes antes de liberar o exterior, preservando a sobra para retirada. Confira ferramenta, unidade, posicionamento e avanços; simule antes de exportar. O motor é experimental.
+
+Em Tempo e perfil da máquina, GRBL por USB lê e grava somente os máximos e acelerações XYZ, com backup e verificação. Desconecte a porta no CNCjs durante a transferência. Editar os campos da estimativa não altera a máquina: é preciso usar Gravar no GRBL. O aplicativo não envia percursos nem movimentos. Algumas placas reiniciam ao abrir a porta USB; confira a referência antes de retomar o CNCjs.
 
 Em Zero, selecione a borda da peça ou informe coordenadas para definir X0/Y0; o Z é independente. Em Girar, o preparo de segunda face vira a peça e deixa apenas Rough, protegendo a fixação central com o diâmetro e a altura informados. Use o mesmo zero G54 na CNC.
 

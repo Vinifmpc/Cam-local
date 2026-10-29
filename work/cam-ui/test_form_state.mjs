@@ -9,10 +9,17 @@ const form={roughEnabled:true,cutoutEnabled:true,operationOrder:'cutout_then_rou
 // Opening a different model must keep values currently typed in the form,
 // even if the previous project snapshot has older feeds and layer settings.
 const edited=readOperationValues(form,previous,tool,0,{strict:false});
+assert.equal(readOperationValues({...form,cutoutSmoothing:'.01'},previous,tool).cutout_smoothing_mm,.01);
+assert.throws(()=>readOperationValues({...form,cutoutSmoothing:'.2'},previous,tool),/Fluidez/);
+assert.equal(readOperationValues({...form,cutoutEnabled:false,cutoutSmoothing:'invalid'},{...previous,cutout_smoothing_mm:.01},tool).cutout_smoothing_mm,.01);
 const oldSettings={stepdown_mm:1.3,stepover_mm:1.1,sampling_mm:.15,radial_allowance_mm:.2,
  stock_top_mm:0,bottom_mm:-15.7,entry_angle_deg:4,clearance_mm:3,obstacle_top_mm:4,
  boundaries_mm:[[[90,90],[95,90],[95,95]]],exclusions_mm:[[[1,1],[2,1],[2,2]]]};
 const mesh={bounds_mm:{minimum:[0,0,-20],maximum:[20,20,0],size:[20,20,20]}};
+const fresh=importedMachiningState(mesh);
+assert.equal(fresh.settings.strategy,'hybrid');assert.equal(fresh.settings.surface_error_mm,.15);assert.equal(fresh.settings.path_tolerance_mm,.02);
+const remembered=importedMachiningState(mesh,{strategy:'planar',surface_error_mm:.3,path_tolerance_mm:.04});
+assert.equal(remembered.settings.strategy,'planar');assert.equal(remembered.settings.surface_error_mm,.3);assert.equal(remembered.settings.path_tolerance_mm,.04);
 const imported=importedMachiningState(mesh,oldSettings,edited,tool.diameter_mm);
 assert.equal(imported.operations.roughing_feed_mm_min,711);
 assert.equal(imported.operations.cutout_feed_mm_min,922);
@@ -75,6 +82,11 @@ assert.equal(priorRoughingAvailable(true,true,'roughing_then_cutout',['drill','r
 assert.equal(priorRoughingAvailable(true,true,'roughing_then_cutout',['roughing','cutout','drill'],true),true);
 assert.equal(edited.cutout_use_prior_roughing,false,'An unavailable reuse checkbox preserves its preference');
 assert.throws(()=>cutoutPreferences({cutout_contours:'unknown'}),/contornos do Cutout/);
+const internalOnly=readOperationValues({...form,roughEnabled:false,drillEnabled:false,cutoutEnabled:true,cutoutContours:'internal'},previous,tool,0);
+assert.equal(internalOnly.cutout_contours,'internal');assert.equal(internalOnly.roughing_enabled,false);
+assert.equal(importedMachiningState(mesh,oldSettings,internalOnly,tool.diameter_mm).operations.cutout_contours,'internal');
+assert.equal(cutoutPreferences(JSON.parse(JSON.stringify(internalOnly))).cutout_contours,'internal');
+assert.match(calculationSummary({moves:[['cut',0,0,0,1,0,0,0,'cutout']],operations:{cutout:{contours_selection:'internal'}}}),/contorno externo não será cortado/);
 
 // Disabled operations must not demand their empty depth, stepdown or feed.
 const roughOnly={...form,cutoutEnabled:false,cutoutDepth:'',cutoutStepdown:'',cutoutFeed:'-1'};

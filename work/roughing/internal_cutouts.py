@@ -33,6 +33,16 @@ def plan_internal_cutouts(triangles,tool,settings,options):
     # Missing feeds still permit a geometric comparison without inventing
     # machining parameters. Only measured feeds produce a time estimate.
     features=[]
+    allowed=None
+    if options.smart_part_released:
+        from region_core import center_regions
+        from smart_planner import _edge_in_domain
+        outer=[p for p in shadow if signed_area(p)>0]
+        guard_mm=settings.boundary_margin_mm+options.cutout_smoothing_mm
+        allowed=center_regions(outer,settings.exclusions_mm or [],tool.diameter_mm,guard_mm)
+        if settings.boundaries_mm:
+            limits=center_regions(settings.boundaries_mm,[],tool.diameter_mm,guard_mm)
+            allowed=boolean(allowed,limits,pyclipr.Intersection) if allowed and limits else []
     for index,(hole,paths) in enumerate(zip(holes,profiles)):
         excluded=offset([hole],-distance)
         core=offset([hole],-tool.diameter_mm-2*guard)
@@ -46,6 +56,8 @@ def plan_internal_cutouts(triangles,tool,settings,options):
         if not closed:reason='mesh_not_closed'
         elif settings.radial_allowance_mm or settings.axial_allowance_mm:reason='machining_allowance_requested'
         elif len(paths)!=1:reason='tool_does_not_fit_one_complete_contour'
+        elif allowed is not None and any(not _edge_in_domain(a,b,allowed)
+                for path in paths for a,b in zip(path,np.roll(path,-1,axis=0))):reason='blocked_by_fixture_or_interior_limits'
         elif sum(signed_area(p) for p in boolean([hole],shadow,pyclipr.Intersection))>1e-6:reason='contains_part_island'
         elif len(core)!=1 or core_area<tool.diameter_mm**2:reason='core_too_small_or_split'
         elif not excluded or ratio<1.25:reason='pocket_is_more_efficient'
@@ -64,5 +76,5 @@ def plan_internal_cutouts(triangles,tool,settings,options):
     selected=[f['hole_index'] for f in features if f['decision']=='cutout']
     return {'policy_version':1,'method':'full_projection_through_openings_and_cost_comparison',
         'selected_indices':selected,'selected_count':len(selected),
-        'features':features,'order':'rough_features_then_internal_profiles_then_external',
+        'features':features,'order':'rough_features_then_internal_profiles' if options.smart_part_released else 'rough_features_then_internal_profiles_then_external',
         'cores_remain_as_waste':bool(selected),'requires_waste_support':bool(selected)}

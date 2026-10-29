@@ -10,17 +10,18 @@ import time
 import uuid
 
 UI_ACTIONS = {
+    'controller.ports', 'controller.read', 'controller.apply', 'controller.import',
     'state', 'demo.open', 'stl.open', 'project.adopt', 'project.save',
-    'config.patch', 'placement.set', 'tools.list', 'tool.set', 'tool.save',
+    'config.patch', 'placement.set', 'tools.list', 'tool.set', 'tool.save', 'tool.editor',
     'placement.panel', 'placement.action', 'placement.undo',
     'placement.outline','placement.pick','placement.reference','placement.second_side',
     'placement.zero',
     'presets.list','presets.save','presets.apply','presets.delete','presets.remember',
     'regions.add', 'regions.remove', 'regions.clear', 'regions.picker', 'regions.draw', 'regions.cancel',
-    'operation.tab', 'operations.set', 'drill.inspect', 'cutout.recovery.apply', 'machining.plan',
+    'operation.tab', 'operations.set', 'drill.inspect', 'cutout.recovery.apply', 'cutout.depth', 'machining.plan',
     'calculate.start', 'calculate.cancel', 'nc.export', 'view.set',
     'view.capture', 'simulation.set', 'simulation.play', 'simulation.pause',
-    'simulation.seek', 'simulation.reset', 'simulation.sample',
+    'simulation.seek', 'simulation.reset', 'simulation.sample', 'simulation.benchmark',
 }
 
 

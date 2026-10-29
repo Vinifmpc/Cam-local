@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {cncjsContext,persistProfileBackup} from './boot.js';
+const location={origin:'http://cnc.local:8001',search:'?token=test-private-token'};
+assert.deepEqual(cncjsContext(location),{host:location.origin,parentOrigin:location.origin,token:'test-private-token'});
+assert.deepEqual(cncjsContext(location,'http://cnc.local:8001/#/workspace'),cncjsContext(location));
+assert.throws(()=>cncjsContext({...location,search:''}),/CNCjs/);
+assert.throws(()=>cncjsContext({...location,search:location.search+'&host=http://attacker.test'}),/mesmo CNCjs/);
+assert.throws(()=>cncjsContext({...location,search:location.search+'&host=file:///tmp/test'}),/mesmo CNCjs/);
+const data=new Map(),storage={getItem:key=>data.get(key)||null,setItem:(key,value)=>data.set(key,value)};
+for(let i=0;i<14;i++)persistProfileBackup(storage,{created_utc:String(i),port:'COM4',before:{'$120':10,'$121':10,token:'private','secret':123},requested:{'$120':80,token:'private'},token:'private'});
+const saved=JSON.parse(data.get('cam-local.grbl-profile-backups'));
+assert.equal(saved.length,10);assert.equal(saved[0].created_utc,'4');assert.deepEqual(saved.at(-1).before,{'$120':10,'$121':10});assert.doesNotMatch(JSON.stringify(saved),/private|token|secret/);
+assert.throws(()=>persistProfileBackup({getItem:()=>null,setItem(){throw Error('quota');}},{before:{},requested:{}}),/backup/);
+assert.throws(()=>persistProfileBackup({getItem:()=>'bad'},{before:{},requested:{}}),/backup/);
+console.log('Widget bootstrap: host binding, authenticated context and bounded token-free durable backups passed.');

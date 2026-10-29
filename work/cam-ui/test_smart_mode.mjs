@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import {effectiveMachiningOptions,validateSmartOperationPatch,smartPlanText,smartEntryHint,smartPolicyText} from './static/smart_mode.js';
+import {effectiveMachiningOptions,validateSmartOperationPatch,smartPlanText,smartEntryHint,smartPolicyText,smartReleaseDepths,breakthroughForCutDepth} from './static/smart_mode.js';
 import {operationListFromOptions,operationOptionsFromList} from './static/operation_list.js';
-import {readOperationValues,priorRoughingAvailable} from './static/form_state.js';
+import {readOperationValues,priorRoughingAvailable,numericValue,timingControlState} from './static/form_state.js';
 import * as THREE from '../ui-runtime/node_modules/three/build/three.module.js';
 import {createAutomaticRegionOverlay} from './static/automatic_regions.js';
 import {FeedClock,timeLabel} from './static/playback.js';
@@ -15,6 +15,13 @@ const smart=effectiveMachiningOptions({...manual,machining_mode:'smart'});
 assert.deepEqual(smart.operation_sequence,['drill','roughing','cutout']);assert.equal(smart.roughing_enabled,true);assert.equal(smart.cutout_enabled,true);
 assert.equal(smart.drill_enabled,false);assert.equal(smart.cutout_contours,'external');assert.equal(smart.cutout_use_prior_roughing,true);
 assert.equal(manual.cutout_contours,'all','Effective policy must not mutate saved manual preferences');
+const released=effectiveMachiningOptions({...manual,machining_mode:'smart',smart_part_released:true});
+assert.equal(released.cutout_contours,'internal');assert.equal(released.smart_part_released,true);
+assert.equal(released.roughing_enabled,true);assert.equal(released.cutout_enabled,true);
+const interiorPlan={enabled:true,part_released:true,sequence:['roughing'],roughing_bottom_mm:-5,internal_cutouts:{selected_count:0},exterior_strategy:{mode:'interior_only'}};
+assert.match(smartPlanText(interiorPlan),/Cutout sem movimentos/);assert.doesNotMatch(smartPlanText(interiorPlan),/recorte solta o exterior/);
+assert.match(smartPolicyText(interiorPlan).order,/exterior fica fora/);
+assert.match(smartPlanText({...interiorPlan,sequence:['roughing','cutout'],cutout_bottom_mm:-5.1,internal_cutouts:{selected_count:1}}),/1 recorte\(s\) interno\(s\)/);
 for(const patch of [{order:['roughing','cutout']},{enabled:{roughing:false}},{enabled:{cutout:false}}])assert.throws(()=>validateSmartOperationPatch(patch),/modo inteligente/);
 validateSmartOperationPatch({enabled:{drill:true}});
 const plan={enabled:true,sequence:['roughing','cutout'],stock_bottom_mm:-10,roughing_bottom_mm:-10,cutout_bottom_mm:-10.2,retention_z_mm:-9.6,skin_mm:.4,cutout_stepdown_mm:.7,assumptions:['Bruto até o fundo do STL.']};
@@ -39,10 +46,10 @@ assert.match(smartPlanText(openEdgePlan),/Cutout: contorno externo completo/);as
 const source=fs.readFileSync(new URL('./static/app.js',import.meta.url),'utf8');
 const functions=source.slice(source.indexOf('function smartModeEnabled('),source.indexOf('function updateHints('));
 const nodes=new Map();
-function element(id){if(!nodes.has(id))nodes.set(id,{value:id==='machiningMode'?'smart':'',dataset:{},disabled:false,hidden:false,checked:false,textContent:''});return nodes.get(id);}
+function element(id){if(!nodes.has(id))nodes.set(id,{value:id==='machiningMode'?'smart':'',dataset:{},style:{},disabled:false,hidden:false,checked:false,textContent:''});return nodes.get(id);}
 const requests=[],payload={asset:'fixture.stl',operations:{machining_mode:'smart'}};
 let reply=async()=>structuredClone(plan),list=operationListFromOptions(manual),locked=false;
-const context=vm.createContext({$:element,data:{},motion:null,revision:4,smartPlanPreview:null,smartPlanPending:false,smartPlanText,smartPolicyText,
+const context=vm.createContext({$:element,data:{},motion:null,revision:4,smartPlanPreview:null,smartPlanPending:false,smartPlanText,smartPolicyText,timingControlState,
  THREE,createAutomaticRegionOverlay,automaticRegionsSource:null,automaticRegionsZ:null,automaticRegionGroup:new THREE.Group(),regionGroup:new THREE.Group(),clearGroup:group=>group.clear(),
  fmt:value=>String(value),commandRequest:()=>structuredClone(payload),effectiveMachiningOptions,operationListFromOptions,operationOptionsFromList,
  operationList:{getState:()=>structuredClone(list),setState:state=>list=structuredClone(state),setLocked:value=>locked=value},
@@ -71,18 +78,21 @@ assert.equal(context.currentSmartPlan(),null,'A stale preview cannot become the 
 reply=async()=>{throw Error('Fundo do bruto acima do modelo.');};
 await assert.rejects(()=>context.inspectSmartPlan(),/Fundo/);assert.equal(element('smartPlanSummary').dataset.state,'error');assert.match(element('smartPlanSummary').textContent,/Fundo/);
 element('machiningMode').value='manual';context.syncSmartOperationList();assert.equal(locked,false);assert.equal(element('smartModePanel').hidden,true);
-// The real selector restores the editable manual choices when the user leaves
-// smart mode, while leaving the typed depth values intact throughout.
+// The real selector restores editable manual choices and typed depths when
+// leaving smart mode, after displaying the resolved smart depths while active.
 list=operationListFromOptions(manual);element('cutoutContours').value='all';element('cutoutUsePriorRoughing').checked=false;
 element('bottom').value='7.3';element('cutoutDepth').value='8.1';
+Object.assign(context,{numericValue,smartReleaseDepths,breakthroughForCutDepth,bounds:()=>({minimum:[0,0,-10]})});
+element('stockTop').value='0';element('smartStockBottom').value='';element('smartBreakthrough').value='0';
 context.manualOperationState=null;context.manualCutoutPreferences=null;context.updateOperationControls=()=>{};
 context.updateHints=()=>{};context.regionList=()=>{};context.dirty=()=>context.revision++;
 const modeHandler=source.slice(source.indexOf("$('machiningMode').onchange=()=>{"),source.indexOf("$('inspectSmartPlan').onclick="));
 vm.runInContext(modeHandler,context);
 element('machiningMode').value='smart';element('machiningMode').onchange();assert.equal(locked,true);assert.equal(element('cutoutContours').value,'external');assert.equal(element('cutoutUsePriorRoughing').checked,true);
-assert.equal(element('bottom').value,'7.3');assert.equal(element('cutoutDepth').value,'8.1');
+assert.equal(Number(element('bottom').value),10);assert.equal(Number(element('cutoutDepth').value),10);
 element('machiningMode').value='manual';element('machiningMode').onchange();assert.equal(locked,false);assert.deepEqual(list,operationListFromOptions(manual));
 assert.equal(element('cutoutContours').value,'all');assert.equal(element('cutoutUsePriorRoughing').checked,false);assert.equal(element('cutoutDepth').value,'8.1');
+assert.equal(element('bottom').value,'7.3','Leaving smart mode restores the separate manual Rough depth');
 // Preview uses the real request builder with strict reads. Invalid geometry
 // cannot silently fall back to an older value while the calculation rejects it.
 const strictReads=[];

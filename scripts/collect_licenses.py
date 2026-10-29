@@ -14,7 +14,7 @@ def collect(destination):
     for source in (ROOT/'work/cam-ui/licenses').iterdir():
         if source.is_file():shutil.copyfile(source,destination/source.name)
     versions={'python':sys.version.split()[0],'node':subprocess.check_output(['node','--version'],text=True).strip(),'python_packages':{}}
-    names=('numpy','pyclipr','pywebview','pythonnet','clr-loader','cffi','pycparser','proxy_tools','bottle',
+    names=('numpy','pyclipr','pyserial','pywebview','pythonnet','clr-loader','cffi','pycparser','proxy_tools','bottle',
            'typing_extensions','packaging','pyinstaller','pyinstaller-hooks-contrib')
     for name in names:
         try:dist=metadata.distribution(name)

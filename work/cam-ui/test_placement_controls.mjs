@@ -14,6 +14,15 @@ function act(p,action){const mesh=scene(p);return placementAction(p,mesh,mesh.tr
 const original={units:'mm',rotation:identity,translation_mm:[-10,-20,-36],xy_origin:'keep',z_origin:'keep'};
 const initial=scene(original);assert.deepEqual(placementOrigin(initial.bounds_mm),{xy:[0,0],z:'top'});
 const rotated=act(original,{kind:'rotate',axis:'x',turns:1});close(scene(rotated).bounds_mm.size,[2,6,4]);
+for(const axis of ['x','y']){
+ const tilted=act(original,{kind:'rotate',axis,angle_deg:45}),box=scene(tilted).bounds_mm;
+ close(box.size,axis==='x'?[2,10*Math.SQRT1_2,10*Math.SQRT1_2]:[8*Math.SQRT1_2,4,8*Math.SQRT1_2]);
+ close(box.minimum.slice(0,2),[0,0]);close([box.maximum[2]],[0]);
+ close(act(tilted,{kind:'rotate',axis,angle_deg:45}).rotation,act(original,{kind:'rotate',axis,turns:1}).rotation);
+ const restored=act(tilted,{kind:'rotate',axis,angle_deg:-45});close(restored.rotation,identity);close(restored.translation_mm,original.translation_mm);
+ let p=original;for(let i=0;i<8;i++)p=act(p,{kind:'rotate',axis,angle_deg:45});close(p.rotation,identity);close(p.translation_mm,original.translation_mm);
+}
+for(const action of [{kind:'rotate',axis:'x',angle_deg:44},{kind:'rotate',axis:'x',angle_deg:45,turns:1},{kind:'rotate',axis:'y',angle_deg:'45'}])assert.throws(()=>act(original,action));
 close(scene(rotated).bounds_mm.minimum,[0,0,-4]);close(scene(rotated).bounds_mm.maximum,[2,6,0]);
 for(const axis of ['x','y','z']){
  let p=original;for(let i=0;i<4;i++)p=act(p,{kind:'rotate',axis,turns:1});
@@ -44,5 +53,11 @@ assert.doesNotMatch(beforeMain,/id="(?:units|face|xyOrigin|zOrigin|applyPlacemen
 const viewport=html.slice(html.indexOf('id="viewport"'),html.indexOf('<div class="transport">'));
 for(const id of ['placementDock','placementPanel','units','face','xyOrigin','zOrigin','applyPlacement','placementDeltaX','placementDeltaY','placementDeltaZ'])assert.ok(viewport.includes(`id="${id}"`),id);
 assert.equal((viewport.match(/data-placement-xy=/g)||[]).length,9);
-assert.equal((viewport.match(/data-placement-rotate=/g)||[]).length,6);
+assert.equal((viewport.match(/data-placement-rotate=/g)||[]).length,12);
+const tableSpin=act(original,{kind:'rotate',axis:'z',angle_deg:45}),tableBox=scene(tableSpin).bounds_mm;
+close(tableBox.size,[6*Math.SQRT1_2,6*Math.SQRT1_2,6]);
+close(tableBox.minimum.map((v,i)=>(v+tableBox.maximum[i])/2),initial.bounds_mm.minimum.map((v,i)=>(v+initial.bounds_mm.maximum[i])/2));
+close([tableBox.minimum[2],tableBox.maximum[2]],[initial.bounds_mm.minimum[2],initial.bounds_mm.maximum[2]]);
+close(act(tableSpin,{kind:'rotate',axis:'z',angle_deg:-45}).translation_mm,original.translation_mm);
+for(const axis of ['x','y'])for(const angle of ['-45','45'])assert.ok(viewport.includes(`data-placement-rotate="${axis}" data-angle="${angle}"`));
 console.log('Placement: real transforms, nine XY anchors, three Z anchors, rotations, units, no-ops and viewport ownership passed.');

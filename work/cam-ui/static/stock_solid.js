@@ -1,7 +1,56 @@
 // Continuous flat-tip sweeps for display, independent of the diagnostic grid.
 // Each sweep is the convex hull of the endpoint disks and their vertical
 // extensions above stock. This also models a linear XYZ ramp, not just XY.
-const rapid=new Set(['travel','retract','clearance_adjust']);
+const rapid=new Set(['travel','retract','clearance_adjust','approach_rapid']);
+// A partial or completed rapid never removes stock. Canonicalize only these
+// trailing moves; a genuine cut fraction must remain exact and chronological.
+export function normalizeSolidTarget(moves,target=moves.length){
+ if(!Number.isFinite(target))throw Error('Posição da reconstrução inválida.');
+ let end=Math.max(0,Math.min(moves.length,target));
+ if(end%1&&rapid.has(moves[Math.floor(end)]?.[0]))end=Math.floor(end);
+ while(Number.isInteger(end)&&end>0&&rapid.has(moves[end-1]?.[0]))end--;
+ return end;
+}
+
+export function cloneSolidMesh(mesh){
+ return {...mesh,positions:mesh.positions.slice(),normals:mesh.normals.slice(),indices:mesh.indices.slice()};
+}
+
+// Cache display meshes, not live WASM solids. Every result owns its buffers,
+// so transfer to the UI can never detach a retained reconstruction.
+export class SolidMeshCache{
+ constructor(build,config,moves,{maxEntries=8,maxBytes=64*1024*1024}={}){
+  if(typeof build!=='function'||!config||!Array.isArray(moves))throw Error('Reconstrução sem configuração válida.');
+  if(!Number.isInteger(maxEntries)||maxEntries<0||!Number.isFinite(maxBytes)||maxBytes<0)throw Error('Limite do cache de superfície inválido.');
+  this.build=build;this.config=config;this.moves=moves;this.maxEntries=maxEntries;this.maxBytes=maxBytes;
+  this.finalKey=normalizeSolidTarget(moves,moves.length);this.entries=new Map();this.bytes=0;
+  this.builds=0;this.hits=0;this.evictions=0;this.uncachedBuilds=0;
+ }
+ stats(){return {builds:this.builds,hits:this.hits,entries:this.entries.size,bytes:this.bytes,
+  budget_bytes:this.maxBytes,max_entries:this.maxEntries,evictions:this.evictions,
+  uncached_builds:this.uncachedBuilds,final_target:this.finalKey,final_cached:this.entries.has(this.finalKey)};}
+ _put(key,mesh){
+  const size=mesh.positions.byteLength+mesh.normals.byteLength+mesh.indices.byteLength;
+  const pinned=this.entries.get(this.finalKey);
+  if(!this.maxEntries||size>this.maxBytes||(key!==this.finalKey&&pinned&&
+      (this.maxEntries<2||size+pinned.size>this.maxBytes))){this.uncachedBuilds++;return;}
+  while(this.entries.size>=this.maxEntries||this.bytes+size>this.maxBytes){
+   const victim=[...this.entries.keys()].find(candidate=>candidate!==this.finalKey);
+   if(victim===undefined){this.uncachedBuilds++;return;}
+   this.bytes-=this.entries.get(victim).size;this.entries.delete(victim);this.evictions++;
+  }
+  this.entries.set(key,{mesh,size});this.bytes+=size;
+ }
+ get(target=this.moves.length,onProgress=()=>{}){
+  const key=normalizeSolidTarget(this.moves,target);let entry=this.entries.get(key),cacheHit=!!entry;
+  if(entry){this.entries.delete(key);this.entries.set(key,entry);this.hits++;}
+  else{
+   this.builds++;const mesh=this.build(this.config,this.moves,key,onProgress);entry={mesh};this._put(key,mesh);
+  }
+  return {...cloneSolidMesh(entry.mesh),cache_key:key,cache_hit:cacheHit,stats:this.stats()};
+ }
+}
+
 export function sweptSegments(config,moves,target=moves.length){
  const end=Math.max(0,Math.min(moves.length,target)),groups=new Map();
  for(let i=0;i<Math.ceil(end);i++){
@@ -30,13 +79,18 @@ export function buildSolid(module,config,moves,target=moves.length,onProgress=()
  const segments=sweptSegments(config,moves,target),batch=[];
  if(segments.length>10000)throw Error('Percurso grande demais para a superfície detalhada nesta versão.');
  const base=M.cube([config.x1-config.x0,config.y1-config.y0,config.top-config.bottom]);
- let solid=base.translate([config.x0,config.y0,config.bottom]);base.delete();
+ let solid;try{solid=base.translate([config.x0,config.y0,config.bottom]);}finally{base.delete();}
  const flush=()=>{
   if(!batch.length)return;
-  const cut=M.union(batch),next=solid.subtract(cut);
-  // Evaluate before releasing the operands of the lazy boolean tree.
-  if(next.status()!=='NoError')throw Error('Falha ao reconstruir a superfície sólida: '+next.status());
-  solid.delete();cut.delete();for(const item of batch)item.delete();batch.length=0;solid=next;
+  let cut=null,next=null;
+  try{
+   cut=M.union(batch);next=solid.subtract(cut);
+   // Evaluate before releasing the operands of the lazy boolean tree.
+   const status=next.status();if(status!=='NoError')throw Error('Falha ao reconstruir a superfície sólida: '+status);
+   const previous=solid;solid=next;next=null;previous.delete();
+  }finally{
+   next?.delete();cut?.delete();for(const item of batch)item.delete();batch.length=0;
+  }
  };
  try{
   for(let i=0;i<segments.length;i++){

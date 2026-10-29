@@ -17,6 +17,21 @@ class PresetTests(unittest.TestCase):
             'settings':{'stepdown_mm':.7},'operations':{'roughing_feed_mm_min':700,'plunge_mm_min':150,
                 'spindle_rpm':8000,'machining_mode':'smart'},'stepover_percent':40}
     def tearDown(self):self.temp.cleanup()
+    def test_internal_only_cutout_is_saved_without_reenabling_other_operations(self):
+        self.profile['operations'].update(machining_mode='manual',roughing_enabled=False,
+            cutout_enabled=True,drill_enabled=False,cutout_contours='internal')
+        saved=self.store.update({'action':'save','name':'Peça já recortada','profile':self.profile})
+        restored=PresetStore(self.store.path).read()
+        self.assertEqual(saved,restored)
+        options=restored['presets'][0]['profile']['operations']
+        self.assertEqual(options['cutout_contours'],'internal')
+        self.assertFalse(options['roughing_enabled']);self.assertFalse(options['drill_enabled'])
+    def test_smart_released_flag_persists_in_named_preset(self):
+        self.profile['operations'].update(smart_part_released=True)
+        saved=self.store.update({'action':'save','name':'Interior · peça solta','profile':self.profile})
+        self.assertEqual(saved,PresetStore(self.store.path).read())
+        options=saved['presets'][0]['profile']['operations']
+        self.assertTrue(options['smart_part_released']);self.assertEqual(options['cutout_contours'],'internal')
     def test_named_and_last_used_survive_reopening_and_updates_are_explicit(self):
         d=self.store.update({'action':'save','name':' MDF · 3,175 ','profile':self.profile});identifier=d['selected_id']
         self.assertEqual(PresetStore(self.store.path).read(),d);self.assertEqual(d['presets'][0]['name'],'MDF · 3,175')

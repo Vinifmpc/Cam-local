@@ -31,10 +31,10 @@ class ParallelGeometryTests(unittest.TestCase):
     def test_spawn_layer_regions_match_serial_exactly_in_both_strategies(self):
         triangles=pocket(True);centers=[np.asarray(rect(-4,-4,4,4),float)]
         layers=planejar_camadas(-3,-3,0,1)
-        for strategy in ('conformal','planar'):
+        for strategy in ('conformal','planar','hybrid'):
             with self.subTest(strategy=strategy):
                 options=dict(radius=.605,top=0,axial_allowance=.1,strategy=strategy,
-                    stepover=.8,phase=0,angle=23,cleanup=True)
+                    stepover=.8,phase=0,angle=23,cleanup=True,path_tolerance=.02 if strategy=='hybrid' else 0)
                 with patch('layer_roughing.geometry_workers',return_value=1):
                     expected=prepare_layer_sources(triangles,centers,layers,**options)
                 events=[]

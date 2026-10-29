@@ -36,20 +36,28 @@ class RoughingSettings:
     region_mode: str = 'projected'
     cleanup_contours: bool = False
     domain_mode: str = 'expanded'
+    surface_error_mm: float = .15
+    path_tolerance_mm: float = .02
+    optimize_entries: bool = True
 
     def __post_init__(self):
         if self.region_mode not in ('projected','layer') or self.domain_mode not in ('expanded','silhouette'):
             raise ValueError('Modo de região/domínio inválido')
         if type(self.cleanup_contours) is not bool or (self.cleanup_contours and self.region_mode!='layer'):
             raise ValueError('Contornos de limpeza exigem region_mode=layer')
-        if self.strategy not in ('conformal','planar'):
-            raise ValueError('Estratégia deve ser conformal ou planar')
+        if self.strategy not in ('conformal','planar','hybrid'):
+            raise ValueError('Estratégia deve ser conformal, planar ou hybrid')
+        if self.strategy=='hybrid' and self.region_mode!='layer':
+            raise ValueError('Desbaste 3D eficiente exige regiões por camada')
         if isinstance(self.raster_angle_deg,bool) or not isinstance(self.raster_angle_deg,(int,float)) or not math.isfinite(self.raster_angle_deg) or not 0<=self.raster_angle_deg<180:
             raise ValueError('Direção das passadas deve estar entre 0 e menos de 180 graus')
         if type(self.compress_collinear) is not bool:
             raise ValueError('compress_collinear deve ser booleano')
         for key in ('stepdown_mm','stepover_mm','sampling_mm','clearance_mm'):
             positive(getattr(self,key),key)
+        positive(self.surface_error_mm,'surface_error_mm')
+        positive(self.path_tolerance_mm,'path_tolerance_mm',zero=True)
+        if type(self.optimize_entries) is not bool:raise ValueError('optimize_entries deve ser booleano')
         for key in ('tolerance_mm','radial_allowance_mm','axial_allowance_mm',
                     'boundary_margin_mm','approach_gap_mm'):
             positive(getattr(self,key),key,zero=True)
@@ -115,7 +123,7 @@ def validate_setup(mesh,tool,settings,*,roughing_enabled=True,operations=None):
     if operations is not None and operations.machining_mode=='smart':
         from smart_planner import resolve_smart_plan
         settings,operations,smart_plan=resolve_smart_plan(mesh,tool,settings,operations)
-        roughing_enabled=True
+        roughing_enabled=operations.roughing_enabled
     low=mesh.triangles.reshape(-1,3).min(axis=0)
     high=mesh.triangles.reshape(-1,3).max(axis=0)
     if settings.stock_top_mm<high[2]-1e-8:
@@ -233,16 +241,21 @@ def calculate_project(path,*,include_motion=False,progress=None):
     # Keep the generated job for later planning; do not compute it twice.
     cutout=None;drill=None;drill_plan=None
     drill_arguments=dict(diameter=tool.diameter_mm,tool_length=tool.cutting_length_mm,
+        retract_mode=options.drill_retract_mode,retract_mm=options.drill_retract_mm,
+        rapid_reentry=options.drill_rapid_reentry,reentry_gap=options.drill_reentry_gap_mm,
         stock_top=s.stock_top_mm,bottom=options.drill_bottom_mm if options.drill_bottom_mm is not None else s.bottom_mm,
         peck=options.drill_peck_mm,tolerance=options.drill_tolerance_mm,
         allow_helix=options.drill_allow_helix,center_cutting=options.drill_center_cutting,
         compensate_facets=options.drill_compensate_facets,
-        clearance=s.clearance_mm,obstacle_top=s.obstacle_top_mm,entry_angle_deg=s.entry_angle_deg)
+        clearance=s.clearance_mm,obstacle_top=s.obstacle_top_mm,entry_angle_deg=s.entry_angle_deg,
+        fixture_travel=smart_plan.get('fixture_travel') if smart_plan is not None else None)
     if options.drill_enabled:
         notify('Detectando furos circulares e conferindo a ferramenta do Drill',.04)
         from drill import generate_drill
         drill,drill_plan=generate_drill(mesh.triangles,**drill_arguments,
             progress=(lambda phase,fraction:notify(phase,.04+.015*fraction)) if progress else None)
+        from smart_planner import validate_released_auxiliary_motion
+        validate_released_auxiliary_motion(drill_plan,mesh.triangles,tool,s,options,'Drill')
     if options.cutout_enabled:
         notify('Conferindo se a fresa cabe nos contornos do cutout',.06)
         from cutout import generate_cutout
@@ -250,7 +263,11 @@ def calculate_project(path,*,include_motion=False,progress=None):
         cutout=generate_cutout(mesh.triangles,diameter=tool.diameter_mm,tool_length=tool.cutting_length_mm,
             top=s.stock_top_mm,bottom=bottom,stepdown=options.cutout_stepdown_mm,direction=options.cutout_direction,
             contours=options.cutout_contours,
-            internal_indices=(smart_plan['internal_cutouts']['selected_indices'] or None) if smart_plan is not None else None)
+            smoothing_mm=options.cutout_smoothing_mm,
+            internal_indices=(smart_plan['internal_cutouts']['selected_indices'] or None) if smart_plan is not None else None,
+            boundaries=s.boundaries_mm if options.smart_part_released and smart_plan is not None else None,
+            exclusions=s.exclusions_mm if options.smart_part_released and smart_plan is not None else None)
+        if smart_plan is not None and smart_plan.get('fixture_travel') is not None:cutout['fixture_travel']=smart_plan['fixture_travel']
         notify('Contornos do cutout conferidos',.10)
     notify('Calculando regiões e passadas de desbaste',.12)
     result=generate_stl_roughing(mesh.triangles,diameter=tool.diameter_mm,
@@ -262,10 +279,12 @@ def calculate_project(path,*,include_motion=False,progress=None):
         raster_origin_y=s.raster_origin_y_mm,strategy=s.strategy,
         raster_angle_deg=s.raster_angle_deg,compress_collinear=s.compress_collinear,
         region_mode=s.region_mode,cleanup_contours=s.cleanup_contours,domain_mode=s.domain_mode,
+        surface_error=s.surface_error_mm,path_tolerance=s.path_tolerance_mm,
         retention=retention,
         center_domain=smart_plan['automatic_regions'].get('source_polygons_mm',smart_plan['automatic_regions']['polygons_mm']) if smart_plan is not None else None,
         protected_overlap_mm=smart_plan['automatic_regions']['quantized_boundary_overlap_mm'] if smart_plan is not None else 0,
         defer_depth_staging=smart_plan is not None,
+        annular_pockets=smart_plan is not None and options.smart_part_released and s.strategy=='planar',
         progress=(lambda phase,fraction:notify(phase,.12+.32*fraction)) if progress else None) if options.roughing_enabled else {
             'layers':[],'cutting_edges':0,'parameters':{'z_top':s.stock_top_mm,'stepdown':s.stepdown_mm},
             'tool':{'diameter':tool.diameter_mm,'length':tool.cutting_length_mm}}
@@ -314,8 +333,24 @@ def calculate_project(path,*,include_motion=False,progress=None):
                 path_order=options.roughing_order if name=='roughing' else 'layer',
                 prior_motion=prior,
                 allow_center_plunge=smart_plan is not None and options.drill_center_cutting and name=='roughing',
+                entry_policy='auto' if name=='roughing' and s.strategy in ('hybrid','planar') and s.optimize_entries else 'ramp',
+                cutting_feed=(options.roughing_feed_mm_min or tool.feed_mm_min) if name=='roughing' else None,
+                plunge_feed=options.plunge_mm_min or tool.plunge_mm_min,
                 progress=(lambda phase,fraction:notify(phase,.52+.35*(index+fraction)/len(sequence))) if progress else None)
+            if (name=='roughing' and initial is None and not plan['moves'] and cutout is not None
+                    and smart_plan is not None and smart_plan.get('fixture_travel')):
+                # Empty Rough must not invent a move starting at the middle
+                # of a clamp. Declare the first real Cutout entry instead.
+                from motion_planner import _branches
+                first=next((p['points'] for layer in cutout['layers'] for p in layer['polylines']),None)
+                if first:
+                    peak=_branches(first)[0]
+                    plan['initial_position']=[*peak[:2],plan['safe_z']]
+                    plan['final_position']=plan['initial_position'].copy()
             initial=plan['final_position'];operations.append((name,plan))
+            if name=='cutout':
+                from smart_planner import validate_released_auxiliary_motion
+                validate_released_auxiliary_motion(plan,mesh.triangles,tool,s,options,'Cutout')
             if name=='roughing':
                 prior_roughing=plan
                 if smart_plan is not None:

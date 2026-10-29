@@ -23,7 +23,7 @@
 .placement-axis>strong,.placement-deltas label>span{color:var(--axis-color)}
 .placement-axis button{display:flex;align-items:center;justify-content:center;gap:4px;font-size:10px;padding:6px 3px;border-color:#dce6ef}
 .placement-axis button svg{width:15px;height:15px;color:var(--axis-color)}
-.placement-axis button[data-turns="-1"] svg{transform:scaleX(-1)}
+.placement-axis button[data-angle="-45"] svg,.placement-axis button[data-turns="-1"] svg{transform:scaleX(-1)}
 .placement-quick{display:flex;gap:7px;margin-top:9px}
 .placement-quick button{display:flex;align-items:center;justify-content:center;flex:1;gap:6px;font-size:10px;padding:8px 4px}
 .placement-quick svg{width:17px;height:17px;color:#527ca0}

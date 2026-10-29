@@ -53,6 +53,19 @@ class SmartPreviewTests(unittest.TestCase):
         self.assertEqual(report['cutout_stepdown_mm'],1)
         self.assertGreater(report['skin_mm'],0)
         self.assertEqual(self.request,before);self.assertFalse(self.app.saved);self.assertFalse(self.app.jobs)
+    def test_released_part_preview_preserves_setup_and_never_selects_external(self):
+        self.request['operations']['smart_part_released']=True
+        before=copy.deepcopy(self.request)
+        code,report=self.post('/api/smart-plan',self.request)
+        self.assertEqual(code,200,report);self.assertTrue(report['part_released'])
+        self.assertIn(report['release_contours'],('none','automatic_internal_only'))
+        self.assertEqual(report['skin_mm'],0);self.assertIsNone(report['retention_z_mm'])
+        self.assertEqual(report['preparation_contours']['eligible'],0)
+        self.assertEqual(report['automatic_regions']['source'],'released_part_interior')
+        self.assertEqual(self.request,before);self.assertFalse(self.app.jobs)
+        self.request['operations']['smart_part_released']='true'
+        code,error=self.post('/api/validate-config',self.request)
+        self.assertEqual(code,400);self.assertIn('booleano',error['error'])
 
     def test_explicit_stock_and_breakthrough_are_validated_before_calculation(self):
         self.request['operations'].update(smart_stock_bottom_mm=-3,smart_breakthrough_mm=.1)

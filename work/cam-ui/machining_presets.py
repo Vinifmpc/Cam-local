@@ -11,7 +11,7 @@ from cam_operations import OperationSettings
 
 SETTING_KEYS=('stepdown_mm','sampling_mm','tolerance_mm','radial_allowance_mm',
     'axial_allowance_mm','boundary_margin_mm','entry_angle_deg','clearance_mm',
-    'approach_gap_mm','strategy','raster_angle_deg','cleanup_contours')
+    'approach_gap_mm','strategy','raster_angle_deg','cleanup_contours','surface_error_mm','path_tolerance_mm','optimize_entries')
 OPERATION_KEYS=tuple(k for k in asdict(OperationSettings()) if k not in (
     'cutout_bottom_mm','drill_bottom_mm','smart_stock_bottom_mm','cutout_use_roughing_regions'))
 

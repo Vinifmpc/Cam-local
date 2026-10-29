@@ -87,7 +87,7 @@ class CutoutTests(unittest.TestCase):
             {'kind':'cut','start':[0,0,0],'end':[0,3,4],'operation':'cutout'},
             {'kind':'approach','start':[0,0,0],'end':[0,0,-2]},
             {'kind':'travel','start':[0,0,0],'end':[100,0,0]}]}
-        o=OperationSettings(roughing_feed_mm_min=600,cutout_feed_mm_min=300,plunge_mm_min=120,rapid_mm_min=3000)
+        o=OperationSettings(roughing_feed_mm_min=600,cutout_feed_mm_min=300,plunge_mm_min=120,rapid_mm_min=3000,timing_model='constant')
         add_timing(result,o,tool)
         self.assertEqual([m['duration_s'] for m in result['moves']],[10,1,1,2])
         self.assertEqual(result['timing']['duration_s'],14)

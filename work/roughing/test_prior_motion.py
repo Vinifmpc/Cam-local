@@ -102,7 +102,8 @@ class PriorMotionTests(unittest.TestCase):
         self.assertEqual(OperationSettings().cutout_contours,'external')
         self.assertTrue(OperationSettings().cutout_use_prior_roughing)
         self.assertFalse(OperationSettings.from_dict({'cutout_use_roughing_regions':True}).cutout_use_roughing_regions)
-        for change in ({'cutout_contours':'internal'},{'cutout_use_prior_roughing':1}):
+        self.assertEqual(OperationSettings(cutout_contours='internal').cutout_contours,'internal')
+        for change in ({'cutout_contours':'unknown'},{'cutout_use_prior_roughing':1}):
             with self.subTest(change=change),self.assertRaises(ValueError):OperationSettings(**change)
 
 

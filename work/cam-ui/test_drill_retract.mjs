@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import {readOperationValues,timingControlState} from './static/form_state.js';
+import {machiningProfile,profilePatch} from './static/machining_presets.js';
+const form={machiningMode:'manual',roughEnabled:false,cutoutEnabled:false,drillEnabled:true,drillDepth:'17',drillPeck:'1',drillTolerance:'.03',rapidFeed:'1500'};
+const full=readOperationValues(form,{},{});assert.equal(full.drill_retract_mode,'full');assert.equal(full.drill_rapid_reentry,true);
+const short=readOperationValues({...form,drillRetractMode:'chip_break',drillRetract:'.5',drillRapidReentry:true,drillReentryGap:'.2'}, {},{});
+assert.equal(short.drill_retract_mm,.5);assert.equal(short.drill_reentry_gap_mm,.2);
+for(const patch of [{drillRetract:''},{drillRetract:'0'},{drillReentryGap:'-.1'},{drillReentryGap:''},{drillRetractMode:'none'}])assert.throws(()=>readOperationValues({...form,drillRetractMode:'chip_break',...patch}, {},{}));
+const source=fs.readFileSync(new URL('./static/app.js',import.meta.url),'utf8');
+const nodes=new Map(),element=id=>{if(!nodes.has(id))nodes.set(id,{value:'',style:{},checked:false,disabled:false,textContent:''});return nodes.get(id);};
+const ctx=vm.createContext({$:element,smartModeEnabled:()=>false,priorRoughingAvailable:()=>false,operationList:{getState:()=>({order:['drill']})},regionPicker:null,drawMode:null,timingControlState});
+element('drillEnabled').checked=true;element('drillRetractMode').value='full';element('drillRapidReentry').checked=true;
+vm.runInContext(source.slice(source.indexOf('function updateOperationControls('),source.indexOf('function fillFields(')),ctx);
+ctx.updateOperationControls();assert.equal(element('drillRetract').disabled,true);assert.equal(element('drillReentryGap').disabled,false);
+element('drillRetractMode').value='chip_break';element('drillRapidReentry').checked=false;ctx.updateOperationControls();assert.equal(element('drillRetract').disabled,false);assert.equal(element('drillReentryGap').disabled,true);
+const html=fs.readFileSync(new URL('./static/index.html',import.meta.url),'utf8');
+for(const id of ['drillRetractMode','drillRetract','drillRapidReentry','drillReentryGap','roughStrategyHint'])assert.equal((html.match(new RegExp('id="'+id+'"','g'))||[]).length,1);
+assert.match(html,/<option value="planar">Camadas simples/);
+const profile=machiningProfile({id:'tool',diameter_mm:2},{strategy:'planar',stepover_mm:1},short);
+// Preference fields are retained; the piece-specific final depth stays out.
+assert.equal(profile.operations.drill_retract_mode,'chip_break');assert.equal(profile.operations.drill_retract_mm,.5);assert.equal(profile.operations.drill_rapid_reentry,true);assert.equal(profile.operations.drill_reentry_gap_mm,.2);
+console.log('Drill settings: full/short retract, rapid reentry, active-field validation, controls and presets passed.');
